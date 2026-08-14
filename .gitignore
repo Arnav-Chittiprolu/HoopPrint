@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Python
+backend/.venv/
+backend/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env
+.env
+.env.local
+.env.*.local
+frontend/.env.local
+backend/.env
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Misc
+*.log
+.coverage
+htmlcov/
+dist/
+build/
+*.mp4
+!backend/tests/fixtures/.gitkeep
