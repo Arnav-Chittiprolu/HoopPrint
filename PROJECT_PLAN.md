@@ -242,22 +242,22 @@ Do not start a phase until the previous phase’s **exit criteria** pass.
 
 #### 2.1 Service
 
-- [ ] Download clip from Storage (or stream)
-- [ ] Sample every 2nd–3rd frame
-- [ ] Run MediaPipe Pose on full frame
-- [ ] Persist `keypoints` rows (JSONB + frame_index)
-- [ ] Set clip `status=processing` → `done` / `failed`
+- [x] Download clip from Storage (or stream)
+- [x] Sample every 2nd–3rd frame
+- [x] Run MediaPipe Pose on full frame
+- [x] Persist `keypoints` rows (JSONB + frame_index)
+- [x] Set clip `status=processing` → `done` / `failed`
 
 #### 2.2 API / CLI
 
-- [ ] `POST /clips/{id}/process` (or auto-kick after upload for individual)
-- [ ] CLI script: `python -m app.scripts.process_clip <clip_id>` for debugging
-- [ ] `GET /clips/{id}/keypoints` for inspection
+- [x] `POST /clips/{id}/process` (or auto-kick after upload for individual)
+- [x] CLI script: `python -m app.scripts.process_clip <clip_id>` for debugging
+- [x] `GET /clips/{id}/keypoints` for inspection
 
 #### 2.3 Tests / fixtures
 
-- [ ] Commit or document one short fixture clip path for local use
-- [ ] Smoke test: processing produces N frames of keypoints
+- [x] Commit or document one short fixture clip path for local use
+- [x] Smoke test: processing produces N frames of keypoints
 
 **Exit criteria:** One real individual clip yields inspectable keypoints JSON end-to-end via API/CLI.
 

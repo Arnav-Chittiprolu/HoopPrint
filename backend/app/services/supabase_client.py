@@ -67,3 +67,64 @@ class SupabaseService:
                 raise RuntimeError(f"Clip fetch failed: {response.status_code} {response.text}")
             rows = response.json()
             return rows[0] if rows else None
+
+    async def get_clip_by_id(self, clip_id: str) -> dict | None:
+        url = f"{self.base_url}/rest/v1/clips?id=eq.{clip_id}&limit=1"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Clip fetch failed: {response.status_code} {response.text}")
+            rows = response.json()
+            return rows[0] if rows else None
+
+    async def update_clip(self, clip_id: str, patch: dict) -> dict:
+        url = f"{self.base_url}/rest/v1/clips?id=eq.{clip_id}"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.patch(
+                url,
+                headers={**self.headers, "Prefer": "return=representation"},
+                json=patch,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Clip update failed: {response.status_code} {response.text}")
+            data = response.json()
+            return data[0] if isinstance(data, list) else data
+
+    async def download_clip_file(self, storage_path: str) -> bytes:
+        url = f"{self.base_url}/storage/v1/object/{STORAGE_BUCKET}/{storage_path}"
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Storage download failed: {response.status_code} {response.text}")
+            return response.content
+
+    async def delete_keypoints_for_clip(self, clip_id: str) -> None:
+        url = f"{self.base_url}/rest/v1/keypoints?clip_id=eq.{clip_id}"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.delete(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Keypoint delete failed: {response.status_code} {response.text}")
+
+    async def insert_keypoints(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        url = f"{self.base_url}/rest/v1/keypoints"
+        async with httpx.AsyncClient(timeout=60.0, verify=certifi.where()) as client:
+            response = await client.post(
+                url,
+                headers={**self.headers, "Prefer": "return=minimal"},
+                json=rows,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Keypoint insert failed: {response.status_code} {response.text}")
+
+    async def list_keypoints(self, clip_id: str) -> list[dict]:
+        url = (
+            f"{self.base_url}/rest/v1/keypoints"
+            f"?clip_id=eq.{clip_id}&order=frame_index.asc"
+        )
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Keypoint list failed: {response.status_code} {response.text}")
+            return response.json()

@@ -86,7 +86,17 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 ## What’s next
 
-Phase 2 — MediaPipe pose extraction on individual clips (see PROJECT_PLAN.md).
+Phase 3 — deterministic feature extraction from keypoints (see PROJECT_PLAN.md).
+
+### Phase 2 — Pose extraction (individual)
+
+MediaPipe Pose on individual clips → `keypoints` rows in Postgres.
+
+- Auto-processes after upload for `source_type=individual`
+- Manual retry: `POST /clips/{id}/process`
+- Inspect: `GET /clips/{id}/keypoints`
+- CLI: `cd backend && PYTHONPATH=. python -m app.scripts.process_clip <clip_id>`
+- First run downloads `pose_landmarker_lite.task` into `backend/models/`
 
 ### Phase 1 — Upload clips
 
