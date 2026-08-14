@@ -274,6 +274,61 @@ export async function getMyHistory(): Promise<HistoryPoint[]> {
   return res.json();
 }
 
+export interface CompMatch {
+  player_id: number | null;
+  name: string;
+  season: string | null;
+  position: string | null;
+  height_in: number | null;
+  score: number;
+  style_vector: Record<string, number>;
+  kind: string;
+}
+
+export interface CompResult {
+  id: string | null;
+  user_id: string;
+  created_at: string | null;
+  season: string | null;
+  label: string;
+  user_style: Record<string, number>;
+  evidence: Record<string, boolean>;
+  mechanics: Record<string, number>;
+  overall: CompMatch[];
+  by_category: Partial<Record<"shot" | "pass" | "drive", CompMatch[]>>;
+  pool_size: number;
+  summary: string | null;
+}
+
+export async function getMyComp(): Promise<CompResult | null> {
+  const res = await apiFetch("/me/comp");
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let message = `Failed to load comp (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function runMyComp(): Promise<CompResult> {
+  const res = await apiFetch("/me/comp", { method: "POST" });
+  if (!res.ok) {
+    let message = `Failed to run comp (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
 export async function uploadClip(
   file: File,
   sourceType: SourceType,

@@ -86,7 +86,28 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 ## What’s next
 
-Phase 5 — NBA style-space comps from questionnaire + aggregated pose features (see PROJECT_PLAN.md).
+Phase 6 — Gemini grounded summary from style comps + mechanics numbers.
+
+### Phase 5 — NBA style-space comps
+
+Full-roster seed from `nba_api` → `nba_players.style_vector` → cosine comps filtered by height/position.
+
+- Migration: `supabase/migrations/20260814180000_phase5_nba_style.sql`
+- Seed (once per season): `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
+- API: `POST /me/comp`, `GET /me/comp`
+- Dashboard: **NBA style comps** panel
+
+**Style slot ← field mapping**
+
+| Style slot | User | NBA (`nba_api` cache) |
+|------------|------|------------------------|
+| `size` | `height_z_nba` vs NBA/position mean (not US male `height_z`) | listed height on same NBA z scale |
+| `perimeter_vs_rim` | `release_angle`, `shot_arc` | Scoring: `PCT_FGA_3PT`, `1 - PCT_PTS_PAINT` |
+| `creation` | `decision_speed` | `PCT_UAST_FGM` + pull-up FGA share vs catch-and-shoot |
+| `drive_burst` | `first_step_burst`, COD | tracking Drives + `AVG_SPEED_OFF` (league min-max) |
+| `passing` | arm extension / consistency | `AST_PCT` + potential assists / passes |
+
+Pose mechanics are returned separately and are **not** treated as FG%/3P%/FT%.
 
 ### Phase 4 — Aggregation + profile questionnaire
 

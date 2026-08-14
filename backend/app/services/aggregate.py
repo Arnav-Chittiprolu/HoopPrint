@@ -8,6 +8,23 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+# US adult male reference (questionnaire height_z on profiles)
+US_MALE_HEIGHT_IN = 69.0
+US_MALE_HEIGHT_SD = 3.0
+
+# NBA population reference (style size + comp bands — NOT the same as US male)
+NBA_LEAGUE_HEIGHT_IN = 78.0  # ~6'6"
+NBA_LEAGUE_HEIGHT_SD = 3.5
+
+# Position means for short/tall *within* that NBA role
+NBA_POSITION_HEIGHT_IN: dict[str, float] = {
+    "guard": 75.0,  # ~6'3"
+    "wing": 78.0,  # ~6'6"
+    "forward": 80.5,  # ~6'8.5"
+    "center": 83.0,  # ~6'11"
+}
+NBA_POSITION_HEIGHT_SD = 2.75
+
 
 def average_features_by_name(
     feature_rows: list[dict],
@@ -49,7 +66,28 @@ def average_features_by_name(
 
 
 def compute_height_z(height_in: float | None) -> float | None:
-    """Z-score vs average adult male height (~69 in, SD ~3 in)."""
+    """Z-score vs average US adult male (~69 in, SD ~3). Stored on profiles."""
     if height_in is None:
         return None
-    return (float(height_in) - 69.0) / 3.0
+    return (float(height_in) - US_MALE_HEIGHT_IN) / US_MALE_HEIGHT_SD
+
+
+def compute_height_z_nba(
+    height_in: float | None,
+    position: str | None = None,
+) -> float | None:
+    """Z-score vs NBA heights — used for style `size` and comp height bands.
+
+    With a questionnaire position, compare to that position's NBA mean.
+    Otherwise compare to league-wide NBA mean (~78 in). This is intentionally
+    different from `compute_height_z` (US male ~69 in).
+    """
+    if height_in is None:
+        return None
+    if position and position in NBA_POSITION_HEIGHT_IN:
+        mean = NBA_POSITION_HEIGHT_IN[position]
+        sd = NBA_POSITION_HEIGHT_SD
+    else:
+        mean = NBA_LEAGUE_HEIGHT_IN
+        sd = NBA_LEAGUE_HEIGHT_SD
+    return (float(height_in) - mean) / sd

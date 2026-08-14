@@ -1,4 +1,8 @@
-from app.services.aggregate import average_features_by_name, compute_height_z
+from app.services.aggregate import (
+    average_features_by_name,
+    compute_height_z,
+    compute_height_z_nba,
+)
 
 
 def test_compute_height_z_average_man():
@@ -9,6 +13,14 @@ def test_compute_height_z_taller_and_shorter():
     assert compute_height_z(72.0) == 1.0
     assert compute_height_z(66.0) == -1.0
     assert compute_height_z(None) is None
+
+
+def test_compute_height_z_nba_league_and_position():
+    assert compute_height_z_nba(78.0) == 0.0
+    assert compute_height_z_nba(75.0, "guard") == 0.0
+    assert compute_height_z_nba(71.0, "guard") < 0
+    # Same person: US-male z and NBA z must not use the same baseline
+    assert compute_height_z(71.0) != compute_height_z_nba(71.0, "guard")
 
 
 def test_average_features_by_name_means_and_clip_counts():

@@ -343,3 +343,100 @@ class SupabaseService:
                     f"Clip feature list failed: {response.status_code} {response.text}"
                 )
             return response.json()
+
+    async def list_nba_players(self, season: str | None = None) -> list[dict]:
+        url = (
+            f"{self.base_url}/rest/v1/nba_players"
+            f"?select=id,player_id,name,season,position,height_in,style_vector,raw_stats,created_at"
+            f"&order=name.asc"
+        )
+        if season:
+            url += f"&season=eq.{season}"
+        async with httpx.AsyncClient(timeout=60.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"NBA player list failed: {response.status_code} {response.text}"
+                )
+            return response.json()
+
+    async def replace_nba_players_for_season(self, season: str, rows: list[dict]) -> list[dict]:
+        delete_url = f"{self.base_url}/rest/v1/nba_players?season=eq.{season}"
+        async with httpx.AsyncClient(timeout=120.0, verify=certifi.where()) as client:
+            delete_resp = await client.delete(delete_url, headers=self.headers)
+            if delete_resp.status_code >= 400:
+                raise RuntimeError(
+                    f"NBA player delete failed: {delete_resp.status_code} {delete_resp.text}"
+                )
+            if not rows:
+                return []
+
+            payload = [
+                {
+                    "player_id": row["player_id"],
+                    "name": row["name"],
+                    "season": season,
+                    "position": row["position"],
+                    "height_in": row["height_in"],
+                    "style_vector": row.get("style_vector") or {},
+                    "raw_stats": row.get("raw_stats") or {},
+                }
+                for row in rows
+            ]
+            # PostgREST prefers chunked inserts for large payloads
+            saved: list[dict] = []
+            chunk_size = 100
+            insert_url = f"{self.base_url}/rest/v1/nba_players"
+            for i in range(0, len(payload), chunk_size):
+                chunk = payload[i : i + chunk_size]
+                insert_resp = await client.post(
+                    insert_url,
+                    headers={**self.headers, "Prefer": "return=representation"},
+                    json=chunk,
+                )
+                if insert_resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"NBA player insert failed: {insert_resp.status_code} {insert_resp.text}"
+                    )
+                data = insert_resp.json()
+                if isinstance(data, list):
+                    saved.extend(data)
+                else:
+                    saved.append(data)
+            return saved
+
+    async def insert_comp_result(self, user_id: str, matches: dict, summary: str | None = None) -> dict:
+        url = f"{self.base_url}/rest/v1/comp_results"
+        payload = {
+            "user_id": user_id,
+            "matches": matches,
+            "summary": summary,
+        }
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.post(
+                url,
+                headers={**self.headers, "Prefer": "return=representation"},
+                json=payload,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Comp result insert failed: {response.status_code} {response.text}"
+                )
+            data = response.json()
+            return data[0] if isinstance(data, list) else data
+
+    async def get_latest_comp_result(self, user_id: str) -> dict | None:
+        url = (
+            f"{self.base_url}/rest/v1/comp_results"
+            f"?user_id=eq.{user_id}"
+            f"&select=id,user_id,matches,summary,created_at"
+            f"&order=created_at.desc&limit=1"
+        )
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Comp result fetch failed: {response.status_code} {response.text}"
+                )
+            rows = response.json()
+            return rows[0] if rows else None

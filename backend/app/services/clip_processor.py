@@ -145,6 +145,7 @@ async def process_individual_clip(clip_id: str, user_id: str | None = None) -> d
             await supabase.replace_user_profile_agg(clip["user_id"], aggregated)
         except Exception:
             # Aggregation failure should not fail the clip once features exist.
+            # Comp endpoint can rebuild agg from clip_features as a fallback.
             pass
 
         updated = await supabase.update_clip(

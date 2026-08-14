@@ -6,6 +6,7 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { ClipUploadForm } from "@/components/clip-upload-form";
 import { ClipList } from "@/components/clip-list";
 import { ProfileQuestionnaireForm } from "@/components/profile-questionnaire-form";
+import { CompPanel } from "@/components/comp-panel";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -54,11 +55,22 @@ export default async function DashboardPage() {
         <div className="rounded-lg border border-zinc-200 bg-white p-5">
           <h2 className="text-lg font-medium text-zinc-900">Your profile</h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Height, position, hand, and primary skill calibrate pose features and (later) NBA style comps.
+            Height, position, hand, and primary skill calibrate pose features and NBA style comps.
             Facts only — not “who you play like.”
           </p>
           <div className="mt-4">
             <ProfileQuestionnaireForm />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200 bg-white p-5">
+          <h2 className="text-lg font-medium text-zinc-900">NBA style comps</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Cosine similarity in style space (size, shot mix, creation, drive, passing) against the
+            full seeded NBA roster — filtered by your position and height.
+          </p>
+          <div className="mt-4">
+            <CompPanel />
           </div>
         </div>
 

@@ -169,20 +169,19 @@ Short onboarding / settings form. **Do not** ask “which NBA player are you lik
 | Field | Values | Role |
 |-------|--------|------|
 | `height_in` | inches | Absolute size; calibrate pose |
-| `height_z` | computed | `(height_in − 69) / 3` vs average adult male (~5'9", SD ~3 in). Negative = shorter end of the scale, positive = taller. |
-| `position` | `guard` \| `wing` \| `forward` \| `center` | Filter NBA pool |
+| `height_z` | computed | `(height_in − 69) / 3` vs **US adult male** (~5'9", SD ~3 in). Profile display / “tall for a man” only. |
+| `height_z_nba` | computed at comp time | `(height_in − NBA mean) / SD` — **not** the US male scale. League mean ~78 in (6'6"); with a stated position use that role’s NBA mean (guard ~75", wing ~78", forward ~80.5", center ~83"). Drives style `size` + height band. |
+| `position` | `guard` \| `wing` \| `forward` \| `center` | Filter NBA pool + choose NBA position mean for `height_z_nba` |
 | `dominant_hand` | `left` \| `right` | Which wrist/elbow to use for release/pass features |
 | `primary_skill` | `shot` \| `pass` \| `drive` | Weight that category higher in ranking |
 
-Store on `profiles`. Recompute `height_z` whenever `height_in` changes.
+Store `height_in` / `height_z` (US male) on `profiles`. Recompute `height_z` whenever `height_in` changes. Do **not** treat US male average as NBA average.
 
 **Height × video:** pose does not know real height. `release_height_ratio` is wrist height / standing-body height **in the frame**. With stated height:
 
 `approx_release_height_in ≈ height_in × release_height_ratio`
 
-Same ratio on a 5'10" user vs a 6'8" user is a different physical profile. Scale `first_step_burst` by body size (displacement in body-lengths), not raw pixels. Height **filters** the NBA pool (height band + position); it does **not** invent shooting/driving/passing mechanics — clips do.
-
-Optional second height view for matching: short/tall **for the stated position** (NBA guard avg ~6'3", wing ~6'6") in addition to `height_z` vs average men.
+Same ratio on a 5'10" user vs a 6'8" user is a different physical profile. Scale `first_step_burst` by body size (displacement in body-lengths), not raw pixels. Height **filters** the NBA pool (height band + position) using **`height_z_nba`**; it does **not** invent shooting/driving/passing mechanics — clips do.
 
 ### 5.6 Style space (how comps actually work)
 
@@ -193,7 +192,7 @@ Do **not** cosine pose joints against FG%/3P%/FT%. Build two related outputs:
 
 | Style slot | From user (video + form) | From NBA (`nba_api`) |
 |------------|--------------------------|----------------------|
-| Size | `height_z`, `height_in` | listed height |
+| Size | `height_z_nba` (vs NBA / position mean) | listed height on same NBA z scale |
 | Perimeter vs rim | `shot_arc` / `release_angle` (if shot clips exist) | %FGA from 3 / mid / rim, avg shot distance |
 | Creation | `decision_speed` (if pass clips exist) | pull-up vs catch-and-shoot, unassisted % |
 | Drive burst | `first_step_burst`, COD (if drive clips exist) | drives/game, speed, %FGA at rim |
@@ -203,10 +202,10 @@ Do **not** cosine pose joints against FG%/3P%/FT%. Build two related outputs:
 
 ```
 eligible NBA players = same position AND listed height within band of user height_in
-                     (band wider if height_z is extreme)
+                     (band wider if height_z_nba is extreme vs NBA/position mean)
 
 score = w_style * cosine(style_user, style_nba)
-      + w_size  * similarity(height_z / height_in, NBA height)
+      + w_size  * similarity(height_in, NBA height_in)
       + primary_skill bonus if that player's profile matches primary_skill
 
 w_style weights for shooting/passing/driving = 0 if that category has no successful clips
@@ -395,23 +394,23 @@ Do not start a phase until the previous phase’s **exit criteria** pass.
 
 #### 5.1 Seed pipeline
 
-- [ ] Script using `nba_api` to pull ~20–30 well-known current players
-- [ ] Store position, listed `height_in`, `raw_stats` (tracking, shot dashboard, bio — not used as fake pose)
-- [ ] Build `style_vector` on the shared slots in §5.6 (size, perimeter vs rim, creation, drive, passing)
-- [ ] Document mapping (which NBA field fills which style slot) in README
+- [x] Script using `nba_api` to pull **all** current NBA players (full roster, not a curated subset)
+- [x] Store position, listed `height_in`, `raw_stats` (tracking, shot dashboard, bio — not used as fake pose)
+- [x] Build `style_vector` on the shared slots in §5.6 (size, perimeter vs rim, creation, drive, passing)
+- [x] Document mapping (which NBA field fills which style slot) in README
 
 #### 5.2 Similarity
 
-- [ ] Build user style vector from questionnaire + pose agg (skip slots with no clip evidence)
-- [ ] Filter pool: same `position` and listed height within band of `height_in` (use `height_z` to explain short vs tall vs average man)
-- [ ] Cosine on style vectors; optional size term; `primary_skill` weight
-- [ ] Return top 1–3 overall **and** per-category matches when that category has clips
-- [ ] Persist `comp_results` (matches JSON; summary filled in Phase 6)
+- [x] Build user style vector from questionnaire + pose agg (skip slots with no clip evidence)
+- [x] Filter pool: same `position` and listed height within band of `height_in` (use `height_z` to explain short vs tall vs average man)
+- [x] Cosine on style vectors; optional size term; `primary_skill` weight
+- [x] Return top 1–3 overall **and** per-category matches when that category has clips
+- [x] Persist `comp_results` (matches JSON; summary filled in Phase 6)
 
 #### 5.3 API
 
-- [ ] `POST /me/comp` or auto-run after agg update (require questionnaire height + position)
-- [ ] `GET /me/comp` — latest matches + scores (mechanics vs style clearly labeled)
+- [x] `POST /me/comp` or auto-run after agg update (require questionnaire height + position)
+- [x] `GET /me/comp` — latest matches + scores (mechanics vs style clearly labeled)
 
 **Exit criteria:** Same inputs always return same top matches; changing height/position or agg changes scores; no LLM involved; a synthetic short guard does not match a much taller center.
 

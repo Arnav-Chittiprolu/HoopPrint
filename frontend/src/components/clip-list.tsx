@@ -39,7 +39,10 @@ function formatDate(iso: string) {
 function canRetry(clip: Clip) {
   return (
     clip.source_type === "individual" &&
-    (clip.status === "processing" || clip.status === "failed" || clip.status === "uploaded")
+    (clip.status === "processing" ||
+      clip.status === "failed" ||
+      clip.status === "uploaded" ||
+      clip.status === "done")
   );
 }
 
@@ -200,7 +203,9 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
                       ? "Starting…"
                       : clip.status === "processing"
                         ? "Retry"
-                        : "Process"}
+                        : clip.status === "done"
+                          ? "Reprocess"
+                          : "Process"}
                   </button>
                 ) : null}
                 <span
