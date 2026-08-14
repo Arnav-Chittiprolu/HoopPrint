@@ -13,7 +13,17 @@ class KeypointFrameResponse(BaseModel):
     created_at: datetime
 
 
+class ClipFeatureResponse(BaseModel):
+    id: UUID
+    clip_id: UUID
+    feature_name: str
+    value: float
+    meta: dict = {}
+    created_at: datetime
+
+
 class ClipProcessResponse(BaseModel):
     clip_id: UUID
     status: str
     frame_count: int
+    feature_count: int = 0

@@ -86,7 +86,22 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 ## What’s next
 
-Phase 3 — deterministic feature extraction from keypoints (see PROJECT_PLAN.md).
+Phase 5 — NBA style-space comps from questionnaire + aggregated pose features (see PROJECT_PLAN.md).
+
+### Phase 4 — Aggregation + profile questionnaire
+
+- After each successful clip, features average into `user_profiles_agg`
+- Dashboard **Your profile** form: height → `height_z`, position, hand, primary skill
+- `GET` / `PATCH /me/profile`, `GET /me/history`
+- Run migration: `supabase/migrations/20260814160000_phase4_profile_questionnaire.sql` in the Supabase SQL Editor
+
+### Phase 3 — Feature extraction
+
+Pose keypoints → deterministic shot / pass / drive features in `clip_features`.
+
+- Inspect: `GET /clips/{id}/features`
+- Reprocess a clip to write features: `POST /clips/{id}/process` or CLI
+- Units and landmark assumptions: `backend/app/services/features/geometry.py`
 
 ### Phase 2 — Pose extraction (individual)
 

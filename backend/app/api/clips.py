@@ -8,10 +8,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from app.auth import CurrentUser, get_current_user
 from app.config import Settings, get_settings
 from app.models.clip import ClipCreateResponse, ClipResponse, ClipStatus, ClipType, SourceType
-from app.models.keypoint import ClipProcessResponse, KeypointFrameResponse
+from app.models.keypoint import ClipFeatureResponse, ClipProcessResponse, KeypointFrameResponse
 from app.services.clip_processor import ClipProcessingError, process_individual_clip
 from app.services.clip_validation import validate_clip_upload
+from app.services.pose_overlay import overlay_storage_path
 from app.services.supabase_client import SupabaseService
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,12 @@ def get_supabase(settings: Settings = Depends(get_settings)) -> SupabaseService:
 async def _run_process_clip(clip_id: str, user_id: str) -> None:
     try:
         result = await process_individual_clip(clip_id, user_id)
-        logger.info("Processed clip %s (%s frames)", clip_id, result["frame_count"])
+        logger.info(
+            "Processed clip %s (%s frames, %s features)",
+            clip_id,
+            result["frame_count"],
+            result.get("feature_count", 0),
+        )
     except ClipProcessingError as exc:
         logger.warning("Background processing failed for clip %s: %s", clip_id, exc)
 
@@ -122,22 +129,40 @@ async def get_clip(
 @router.post("/{clip_id}/process", response_model=ClipProcessResponse)
 async def process_clip(
     clip_id: str,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase),
 ) -> ClipProcessResponse:
     try:
-        result = await process_individual_clip(clip_id, user.id)
-    except ClipProcessingError as exc:
-        message = str(exc)
-        if message == "Clip not found":
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message) from exc
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from exc
+        clip = await supabase.get_clip(clip_id, user.id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch clip: {exc}",
+        ) from exc
 
-    clip = result["clip"]
-    return ClipProcessResponse(
-        clip_id=clip["id"],
-        status=clip["status"],
-        frame_count=result["frame_count"],
-    )
+    if clip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    if clip["source_type"] != SourceType.individual.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pose extraction is only supported for individual clips",
+        )
+
+    try:
+        await supabase.update_clip(
+            clip_id,
+            {"status": ClipStatus.processing.value, "error_message": None},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to update clip: {exc}",
+        ) from exc
+
+    background_tasks.add_task(_run_process_clip, clip_id, user.id)
+    return ClipProcessResponse(clip_id=clip_id, status=ClipStatus.processing.value, frame_count=0)
 
 
 @router.get("/{clip_id}/keypoints", response_model=list[KeypointFrameResponse])
@@ -166,3 +191,76 @@ async def list_clip_keypoints(
         ) from exc
 
     return [KeypointFrameResponse.model_validate(row) for row in rows]
+
+
+@router.get("/{clip_id}/features", response_model=list[ClipFeatureResponse])
+async def list_clip_features(
+    clip_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase),
+) -> list[ClipFeatureResponse]:
+    try:
+        clip = await supabase.get_clip(clip_id, user.id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch clip: {exc}",
+        ) from exc
+
+    if clip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    try:
+        rows = await supabase.list_clip_features(clip_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to list features: {exc}",
+        ) from exc
+
+    return [ClipFeatureResponse.model_validate(row) for row in rows]
+
+
+class OverlayUrlResponse(BaseModel):
+    url: str
+    expires_in: int = 3600
+
+
+@router.get("/{clip_id}/overlay-url", response_model=OverlayUrlResponse)
+async def get_overlay_url(
+    clip_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase),
+) -> OverlayUrlResponse:
+    try:
+        clip = await supabase.get_clip(clip_id, user.id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch clip: {exc}",
+        ) from exc
+
+    if clip is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
+
+    path = overlay_storage_path(clip["storage_path"])
+    try:
+        exists = await supabase.storage_object_exists(path)
+    except Exception:
+        exists = False
+
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pose overlay not ready for this clip",
+        )
+
+    try:
+        url = await supabase.create_signed_url(path, expires_in=3600)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to sign overlay URL: {exc}",
+        ) from exc
+
+    return OverlayUrlResponse(url=url, expires_in=3600)

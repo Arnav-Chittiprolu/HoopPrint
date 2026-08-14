@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listClipsServer } from "@/lib/api-server";
@@ -6,6 +5,7 @@ import type { Clip } from "@/lib/api";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ClipUploadForm } from "@/components/clip-upload-form";
 import { ClipList } from "@/components/clip-list";
+import { ProfileQuestionnaireForm } from "@/components/profile-questionnaire-form";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -52,6 +52,17 @@ export default async function DashboardPage() {
 
       <section className="mt-10 space-y-4">
         <div className="rounded-lg border border-zinc-200 bg-white p-5">
+          <h2 className="text-lg font-medium text-zinc-900">Your profile</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Height, position, hand, and primary skill calibrate pose features and (later) NBA style comps.
+            Facts only — not “who you play like.”
+          </p>
+          <div className="mt-4">
+            <ProfileQuestionnaireForm />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200 bg-white p-5">
           <h2 className="text-lg font-medium text-zinc-900">Upload clip</h2>
           <p className="mt-1 text-sm text-zinc-600">
             Short mp4 (~25s max). Individual drills process immediately; gameplay
@@ -74,11 +85,8 @@ export default async function DashboardPage() {
         </div>
 
         <p className="text-xs text-zinc-500">
-          Pose analysis starts in Phase 2. See{" "}
-          <Link href="/" className="text-orange-700 hover:underline">
-            home
-          </Link>{" "}
-          or <code>PROJECT_PLAN.md</code>.
+          Individual clips run MediaPipe Pose after upload. Refresh is automatic while
+          processing. See <code>PROJECT_PLAN.md</code>.
         </p>
       </section>
     </main>

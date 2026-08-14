@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import ssl
 import tempfile
 import urllib.request
@@ -14,6 +16,9 @@ from mediapipe.tasks.python.vision import pose_landmarker
 from mediapipe.tasks.python.vision.core import image as image_module
 
 from app.services.pose_landmarks import POSE_LANDMARK_NAMES
+from app.services.pose_quality import is_plausible_person
+
+logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = BACKEND_DIR / "models"
@@ -60,7 +65,7 @@ def _landmarks_to_dict(landmarks) -> dict:
                 "visibility": float(getattr(landmark, "visibility", 0.0) or 0.0),
             }
         )
-    visibilities = [point["visibility"] for point in points if point["visibility"] > 0]
+    visibilities = [point["visibility"] for point in points]
     confidence = float(sum(visibilities) / len(visibilities)) if visibilities else 0.0
     return {"landmarks": points, "landmark_count": len(points), "confidence": confidence}
 
@@ -87,16 +92,26 @@ def extract_pose_keypoints(
 
     results: list[FrameKeypoints] = []
     landmarker = _create_landmarker()
+    tmp_path: str | None = None
+    frame_index = 0
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
-        tmp.write(video_bytes)
-        tmp.flush()
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(video_bytes)
+            tmp.flush()
+            tmp_path = tmp.name
 
-        capture = cv2.VideoCapture(tmp.name)
+        capture = cv2.VideoCapture(tmp_path)
         if not capture.isOpened():
             raise ValueError("Could not open video for pose extraction")
 
-        frame_index = 0
+        total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        logger.info(
+            "Pose extraction started (frames=%s, step=%s)",
+            total_frames or "unknown",
+            frame_step,
+        )
+
         try:
             while True:
                 ok, frame_bgr = capture.read()
@@ -115,17 +130,33 @@ def extract_pose_keypoints(
                     detection = landmarker.detect(mp_image)
                     if detection.pose_landmarks:
                         payload = _landmarks_to_dict(detection.pose_landmarks[0])
-                        results.append(
-                            FrameKeypoints(
-                                frame_index=frame_index,
-                                keypoints=payload,
-                                track_confidence=payload["confidence"],
+                        if is_plausible_person(payload):
+                            results.append(
+                                FrameKeypoints(
+                                    frame_index=frame_index,
+                                    keypoints=payload,
+                                    track_confidence=payload["confidence"],
+                                )
                             )
+
+                    if frame_index > 0 and frame_index % (frame_step * 15) == 0:
+                        logger.info(
+                            "Pose extraction progress: frame %s/%s (%s poses)",
+                            frame_index,
+                            total_frames or "?",
+                            len(results),
                         )
 
                 frame_index += 1
         finally:
             capture.release()
-            landmarker.close()
+    finally:
+        landmarker.close()
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
+    logger.info("Pose extraction finished: %s pose frames from %s video frames", len(results), frame_index)
     return results

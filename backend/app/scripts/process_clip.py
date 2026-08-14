@@ -23,6 +23,7 @@ async def _main(clip_id: str) -> int:
                 "clip_id": result["clip"]["id"],
                 "status": result["clip"]["status"],
                 "frame_count": result["frame_count"],
+                "feature_count": result.get("feature_count", 0),
             },
             indent=2,
         )

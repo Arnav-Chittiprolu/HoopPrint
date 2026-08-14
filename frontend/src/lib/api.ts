@@ -134,6 +134,146 @@ export async function listClips(): Promise<Clip[]> {
   return res.json();
 }
 
+export async function processClip(clipId: string): Promise<{
+  clip_id: string;
+  status: ClipStatus;
+  frame_count: number;
+}> {
+  const res = await apiFetch(`/clips/${clipId}/process`, { method: "POST" });
+  if (!res.ok) {
+    let message = `Failed to process clip (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export interface ClipFeature {
+  id: string;
+  clip_id: string;
+  feature_name: string;
+  value: number;
+  meta: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function listClipFeatures(clipId: string): Promise<ClipFeature[]> {
+  const res = await apiFetch(`/clips/${clipId}/features`);
+  if (!res.ok) {
+    let message = `Failed to list features (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function getClipOverlayUrl(clipId: string): Promise<string | null> {
+  const res = await apiFetch(`/clips/${clipId}/overlay-url`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let message = `Failed to load overlay (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { url: string };
+  return body.url;
+}
+
+export type PlayerPosition = "guard" | "wing" | "forward" | "center";
+export type DominantHand = "left" | "right";
+export type PrimarySkill = "shot" | "pass" | "drive";
+
+export interface ProfileQuestionnaire {
+  display_name: string | null;
+  height_in: number | null;
+  height_z: number | null;
+  position: PlayerPosition | null;
+  dominant_hand: DominantHand | null;
+  primary_skill: PrimarySkill | null;
+}
+
+export interface AggregatedFeature {
+  feature_name: string;
+  value: number;
+  clip_count: number;
+  updated_at?: string | null;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string | null;
+  questionnaire: ProfileQuestionnaire;
+  aggregated_features: AggregatedFeature[];
+}
+
+export interface HistoryPoint {
+  clip_id: string;
+  clip_type: string;
+  feature_name: string;
+  value: number;
+  created_at: string;
+}
+
+export async function getMyProfile(): Promise<UserProfile> {
+  const res = await apiFetch("/me/profile");
+  if (!res.ok) {
+    let message = `Failed to load profile (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function updateMyProfile(
+  patch: Partial<Omit<ProfileQuestionnaire, "height_z">>,
+): Promise<UserProfile> {
+  const res = await apiFetch("/me/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    let message = `Failed to update profile (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function getMyHistory(): Promise<HistoryPoint[]> {
+  const res = await apiFetch("/me/history");
+  if (!res.ok) {
+    let message = `Failed to load history (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
 export async function uploadClip(
   file: File,
   sourceType: SourceType,

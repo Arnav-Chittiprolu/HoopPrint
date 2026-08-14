@@ -2,7 +2,7 @@
 
 Basketball Skill Analyzer + NBA Player Comp
 
-Full-stack web app: upload basketball footage → biomechanical features from pose → NBA player similarity → grounded LLM summary.
+Full-stack web app: upload basketball footage → biomechanical features from pose → profile questionnaire (height, position, role) → style-space NBA comps from tracking/shot mix (not box-score proxies) → grounded LLM summary.
 
 **Status:** Greenfield (empty repo). Build backend pipeline end-to-end before dashboard polish.
 
@@ -12,23 +12,28 @@ Full-stack web app: upload basketball footage → biomechanical features from po
 
 ### 1.1 What it does
 
-1. User uploads a short clip (max ~15–20s, mp4).
-2. User sets `source_type`: `individual` (solo drill) or `gameplay` (multi-person frame).
-3. User sets `clip_type`: `shot` | `pass` | `drive`.
-4. System extracts pose keypoints for **only the uploaded user**.
-5. Pure functions compute biomechanical features.
-6. Features aggregate across the user’s clips over time.
-7. Cosine similarity / k-NN matches the user to real NBA players (`nba_api` data).
-8. Gemini produces a short summary **only from provided numbers**.
-9. Dashboard shows overlay, feature charts, comp card, writeup, history.
+1. User fills a short **profile questionnaire** (height, position, hand, primary skill).
+2. User uploads a short clip (max ~15–20s, mp4).
+3. User sets `source_type`: `individual` (solo drill) or `gameplay` (multi-person frame).
+4. User sets `clip_type`: `shot` | `pass` | `drive`.
+5. System extracts pose keypoints for **only the uploaded user**.
+6. Pure functions compute biomechanical features (mechanics card).
+7. Features aggregate across the user’s clips over time.
+8. Questionnaire + pose fuse into a **style vector**; NBA pool is filtered by height/position; cosine / k-NN vs cached `nba_api` **tracking / shot-profile / bio** (style card).
+9. Gemini produces a short summary **only from provided numbers**.
+10. Dashboard shows overlay, feature charts, mechanics + style comps, writeup, history.
 
 ### 1.2 Hard constraints (never violate)
 
 - **Single-player analysis only** — never track or analyze other people in frame.
 - Gameplay: user draws **one** bbox once; CSRT (or similar) tracks that person only.
 - Passing quality = user’s body mechanics only (not pass outcome / teammates / defenders).
-- NBA comps come from **computed similarity**, never from the LLM.
-- NBA stats come from **nba_api** (or another real source) — never fabricated.
+- NBA comps come from **computed similarity**, never from the LLM and never from a “who do you play like?” answer.
+- Questionnaire answers are **facts/context only** (calibrate, filter, extra vector slots). They do not pick the player.
+- Do **not** map pose features 1:1 onto box-score outcomes (e.g. `release_angle` ≠ 3P%, `elbow_angle` ≠ FT%). Those are different quantities.
+- NBA numbers come from **`nba_api`** (or another real source) — never fabricated. Prefer tracking, shot-profile, and bio over FG%/3P%/FT% as similarity inputs.
+- Height from the form is stored in inches and also as **`height_z` vs average adult male** (~69 in, SD ~3 in): short / average / tall on that scale. Use it to scale pose (absolute release height ≈ stated height × `release_height_ratio`) and to filter the NBA pool. Height does not override clip mechanics.
+- Only compare categories the user has evidence for (shot clips → shooting style; no drive clips → do not use drive stats).
 - No action recognition beyond shot / pass / drive.
 - No full-game analytics (score, possessions, team stats).
 - If tracking confidence drops or box is lost for several frames → **skip segment**, do not extract garbage keypoints.
@@ -36,9 +41,10 @@ Full-stack web app: upload basketball footage → biomechanical features from po
 ### 1.3 Explicit non-goals
 
 - Multi-object tracking / defender recognition / “good pass decision” relative to court context
-- Using an LLM to pick the NBA comp
+- Using an LLM (or a questionnaire self-pick) to choose the NBA comp
 - Fabricating stats or inventing game history in the summary
-- Expanding feature set beyond the list in §5
+- Treating box-score shooting percentages as stand-ins for joint angles
+- Expanding pose feature set beyond the list in §5.1–5.3
 
 ---
 
@@ -89,7 +95,7 @@ HoopPrint/
   backend/
     app/
       api/                 # FastAPI routers
-      services/            # pose, track, features, nba, llm, aggregate
+      services/            # pose, track, features, style, nba, llm, aggregate
       models/              # pydantic schemas
       db/                  # Supabase / SQL helpers
     tests/
@@ -109,14 +115,14 @@ HoopPrint/
 
 | Table | Purpose |
 |-------|---------|
-| `profiles` | `id` FK → `auth.users`, display name, timestamps |
+| `profiles` | `id` FK → `auth.users`, display name, questionnaire fields (§5.5), timestamps |
 | `clips` | user_id, source_type, clip_type, storage_path, status, timestamps |
 | `player_boxes` | clip_id, normalized bbox (x,y,w,h) — gameplay only |
 | `keypoints` | clip_id, frame_index, keypoints JSONB, track_confidence |
-| `clip_features` | clip_id, feature_name, value, meta JSONB |
-| `user_profiles_agg` | user_id, feature_name, value, clip_count, updated_at |
-| `nba_players` | name, season, feature_vector JSONB, raw_stats JSONB |
-| `comp_results` | user_id, matches JSONB, summary text, created_at |
+| `clip_features` | clip_id, feature_name, value, meta JSONB — **pose mechanics only** |
+| `user_profiles_agg` | user_id, feature_name, value, clip_count, updated_at — pose mechanics agg |
+| `nba_players` | name, season, position, height_in, style_vector JSONB, raw_stats JSONB |
+| `comp_results` | user_id, matches JSONB (overall + per-category), summary text, created_at |
 
 ### 4.2 Clip status machine
 
@@ -154,23 +160,80 @@ Each feature is a **pure function**: `keypoints[] → float`. Unit-test each aga
 
 - Pool **individual + gameplay** clips together by feature / category once features exist.
 - Recompute `user_profiles_agg` whenever a clip finishes successfully.
+- Weight later comps by `clip_count` and average `track_confidence` per category.
+
+### 5.5 Profile questionnaire (facts only)
+
+Short onboarding / settings form. **Do not** ask “which NBA player are you like?”
+
+| Field | Values | Role |
+|-------|--------|------|
+| `height_in` | inches | Absolute size; calibrate pose |
+| `height_z` | computed | `(height_in − 69) / 3` vs average adult male (~5'9", SD ~3 in). Negative = shorter end of the scale, positive = taller. |
+| `position` | `guard` \| `wing` \| `forward` \| `center` | Filter NBA pool |
+| `dominant_hand` | `left` \| `right` | Which wrist/elbow to use for release/pass features |
+| `primary_skill` | `shot` \| `pass` \| `drive` | Weight that category higher in ranking |
+
+Store on `profiles`. Recompute `height_z` whenever `height_in` changes.
+
+**Height × video:** pose does not know real height. `release_height_ratio` is wrist height / standing-body height **in the frame**. With stated height:
+
+`approx_release_height_in ≈ height_in × release_height_ratio`
+
+Same ratio on a 5'10" user vs a 6'8" user is a different physical profile. Scale `first_step_burst` by body size (displacement in body-lengths), not raw pixels. Height **filters** the NBA pool (height band + position); it does **not** invent shooting/driving/passing mechanics — clips do.
+
+Optional second height view for matching: short/tall **for the stated position** (NBA guard avg ~6'3", wing ~6'6") in addition to `height_z` vs average men.
+
+### 5.6 Style space (how comps actually work)
+
+Do **not** cosine pose joints against FG%/3P%/FT%. Build two related outputs:
+
+1. **Mechanics card** — pose features from §5.1–5.3 (and user history). No NBA joint angles exist in `nba_api`; do not pretend they do.
+2. **Style card** — shared slots both sides can fill honestly:
+
+| Style slot | From user (video + form) | From NBA (`nba_api`) |
+|------------|--------------------------|----------------------|
+| Size | `height_z`, `height_in` | listed height |
+| Perimeter vs rim | `shot_arc` / `release_angle` (if shot clips exist) | %FGA from 3 / mid / rim, avg shot distance |
+| Creation | `decision_speed` (if pass clips exist) | pull-up vs catch-and-shoot, unassisted % |
+| Drive burst | `first_step_burst`, COD (if drive clips exist) | drives/game, speed, %FGA at rim |
+| Passing | arm extension / consistency (if pass clips exist) | AST%, potential assists / passes (tracking) |
+
+**Fusion / ranking**
+
+```
+eligible NBA players = same position AND listed height within band of user height_in
+                     (band wider if height_z is extreme)
+
+score = w_style * cosine(style_user, style_nba)
+      + w_size  * similarity(height_z / height_in, NBA height)
+      + primary_skill bonus if that player's profile matches primary_skill
+
+w_style weights for shooting/passing/driving = 0 if that category has no successful clips
+```
+
+Category comps allowed: “jumper like X, driver like Y” when the user has evidence in more than one category. Overall name is optional and must be explained as **play-style**, not identical motion.
+
+Document the exact slot ← field mapping in code comments + README when Phase 5 lands. Prefer NBA **tracking / shot dashboard / bio** over shooting percentages.
 
 ---
 
 ## 6. Core pipeline
 
 ```
+Questionnaire → profiles (height_z, position, role)
 Upload → Storage + clips row
   → [gameplay: bbox + CSRT track + confidence skip]
   → MediaPipe Pose (sampled frames; crop if gameplay)
-  → Feature functions
+  → Feature functions (mechanics) + height calibration
   → Aggregate user profile
-  → Cosine similarity vs nba_players
+  → Style vector (form + pose) → filter NBA pool → cosine vs nba_players.style_vector
   → Gemini grounded summary
   → Persist comp_results
 ```
 
 **Rule:** verify each stage on **individual** clips first (no tracker), then add gameplay.
+`nba_api` is a **seed/cache** pipeline, not a live call per upload.
 
 ---
 
@@ -269,77 +332,88 @@ Do not start a phase until the previous phase’s **exit criteria** pass.
 
 #### 3.1 Shared helpers
 
-- [ ] Angle between joints, distance, standing height proxy, release-frame heuristics
-- [ ] Document assumptions (which landmark indices, units)
+- [x] Angle between joints, distance, standing height proxy, release-frame heuristics
+- [x] Document assumptions (which landmark indices, units)
+- [x] Use `profiles.dominant_hand` to pick left vs right wrist/elbow when present; default right
 
 #### 3.2 Shot features
 
-- [ ] `release_angle`, `elbow_angle_at_release`, `release_height_ratio`, `shot_arc`
-- [ ] Unit tests with manually verified expected ranges for fixture clip
+- [x] `release_angle`, `elbow_angle_at_release`, `release_height_ratio`, `shot_arc`
+- [x] If `height_in` is set, also store `approx_release_height_in` in feature `meta` (height × ratio)
+- [x] Unit tests with manually verified expected ranges for fixture clip
 
 #### 3.3 Pass features
 
-- [ ] `arm_extension_at_release`, `release_point_consistency`, `decision_speed`
-- [ ] Unit tests
+- [x] `arm_extension_at_release`, `release_point_consistency`, `decision_speed`
+- [x] Unit tests
 
 #### 3.4 Drive features
 
-- [ ] `first_step_burst`, `change_of_direction_angle`
-- [ ] Unit tests
+- [x] `first_step_burst`, `change_of_direction_angle`
+- [x] Scale first-step displacement in body-lengths (not raw pixels) when standing-height proxy / `height_in` exists
+- [x] Unit tests
 
 #### 3.5 Persistence
 
-- [ ] Write `clip_features` after successful extraction
-- [ ] Wire into process pipeline after pose
+- [x] Write `clip_features` after successful extraction
+- [x] Wire into process pipeline after pose
 
 **Exit criteria:** Each feature function has ≥1 unit test; processing an individual shot/pass/drive writes `clip_features`.
 
 ---
 
-### Phase 4 — Multi-clip aggregation
+### Phase 4 — Multi-clip aggregation + profile questionnaire
 
-**Goal:** User profile is the average (or agreed aggregate) of features across clips.
+**Goal:** User profile is the average of pose features across clips, plus stored questionnaire context.
 
 #### 4.1 Logic
 
-- [ ] Aggregate by `feature_name` across all successful clips for user
-- [ ] Pool individual + gameplay once features exist
-- [ ] Upsert `user_profiles_agg` after each successful clip
-- [ ] Store `clip_count` and `updated_at`
+- [x] Aggregate by `feature_name` across all successful clips for user
+- [x] Pool individual + gameplay once features exist
+- [x] Upsert `user_profiles_agg` after each successful clip
+- [x] Store `clip_count` and `updated_at`
 
-#### 4.2 API
+#### 4.2 Questionnaire
 
-- [ ] `GET /me/profile` — aggregated feature vector
-- [ ] `GET /me/history` — time series of agg values (or per-clip feature history)
+- [x] Migration: add questionnaire columns on `profiles` (§5.5)
+- [x] Compute `height_z = (height_in − 69) / 3` on write
+- [x] `GET` / `PATCH /me/profile` — display name + questionnaire
+- [x] Frontend: short onboarding form (required before first comp; optional before upload)
 
-**Exit criteria:** Two shot clips with different release angles → agg reflects both; history endpoint returns change over time.
+#### 4.3 API
+
+- [x] `GET /me/profile` — questionnaire + aggregated feature vector
+- [x] `GET /me/history` — time series of agg values (or per-clip feature history)
+
+**Exit criteria:** Two shot clips with different release angles → agg reflects both; history endpoint returns change over time; user can save height/position and `height_z` is stored.
 
 ---
 
-### Phase 5 — NBA player database + comp engine
+### Phase 5 — NBA player database + style-space comp engine
 
-**Goal:** Real comps from real stats; no hardcoding of “you are like X”.
+**Goal:** Real comps from real tracking/shot-profile/bio; no hardcoding of “you are like X”; no joint-angle ↔ shooting-% mapping.
 
 #### 5.1 Seed pipeline
 
 - [ ] Script using `nba_api` to pull ~20–30 well-known current players
-- [ ] Map available stats → normalized feature dimensions that align with user vector
-- [ ] Store `nba_players.feature_vector` + `raw_stats`
-- [ ] Document mapping (which NBA stat ↔ which user feature / proxy)
+- [ ] Store position, listed `height_in`, `raw_stats` (tracking, shot dashboard, bio — not used as fake pose)
+- [ ] Build `style_vector` on the shared slots in §5.6 (size, perimeter vs rim, creation, drive, passing)
+- [ ] Document mapping (which NBA field fills which style slot) in README
 
 #### 5.2 Similarity
 
-- [ ] Normalize user agg vector to same dimensions
-- [ ] Cosine similarity (and/or k-NN distance)
-- [ ] Return top 1–3 with scores
+- [ ] Build user style vector from questionnaire + pose agg (skip slots with no clip evidence)
+- [ ] Filter pool: same `position` and listed height within band of `height_in` (use `height_z` to explain short vs tall vs average man)
+- [ ] Cosine on style vectors; optional size term; `primary_skill` weight
+- [ ] Return top 1–3 overall **and** per-category matches when that category has clips
 - [ ] Persist `comp_results` (matches JSON; summary filled in Phase 6)
 
 #### 5.3 API
 
-- [ ] `POST /me/comp` or auto-run after agg update
-- [ ] `GET /me/comp` — latest matches + scores
+- [ ] `POST /me/comp` or auto-run after agg update (require questionnaire height + position)
+- [ ] `GET /me/comp` — latest matches + scores (mechanics vs style clearly labeled)
 
-**Exit criteria:** Same user vector always returns same top matches; scores change when agg changes; no LLM involved.
+**Exit criteria:** Same inputs always return same top matches; changing height/position or agg changes scores; no LLM involved; a synthetic short guard does not match a much taller center.
 
 ---
 
@@ -357,10 +431,11 @@ Do not start a phase until the previous phase’s **exit criteria** pass.
 
 Must include:
 
-- User computed feature values
-- Matched player real stat values
-- Similarity score(s)
-- Explicit instruction: *Only reference the numeric values provided below. Do not invent statistics, game history, or claims not present in this data.*
+- Questionnaire context (`height_in`, `height_z` interpretation, position, primary skill)
+- User computed pose feature values (mechanics)
+- Matched player real tracking / shot-profile / bio values (style)
+- Similarity score(s) and whether the match is style vs mechanics
+- Explicit instruction: *Only reference the numeric values provided below. Do not invent statistics, game history, or claims not present in this data. Do not say the user’s elbow angle equals a shooting percentage.*
 
 #### 6.3 Output + storage
 
@@ -405,8 +480,9 @@ Must include:
 #### 8.1 Results page
 
 - [ ] Video + keypoint overlay visualization
-- [ ] Feature breakdown charts
-- [ ] NBA comp card (name, score, key overlapping stats)
+- [ ] Feature breakdown charts (mechanics from video)
+- [ ] NBA **style** comp card (name, score, overlapping shot mix / tracking / height)
+- [ ] Mechanics summary (pose features; not claimed as NBA joint angles)
 - [ ] LLM writeup
 
 #### 8.2 History
@@ -418,6 +494,7 @@ Must include:
 - [ ] Status polling while `processing`
 - [ ] Clear errors for failed clips / lost tracking
 - [ ] Mobile-usable upload + bbox
+- [ ] Profile questionnaire (height, position, role) before first comp
 
 **Exit criteria:** Full happy path in browser for individual and gameplay, without using API clients manually.
 
@@ -464,9 +541,10 @@ Must include:
 | POST | `/clips/{id}/process` | Kick / retry |
 | GET | `/clips/{id}/keypoints` | Debug / overlay |
 | GET | `/clips/{id}/features` | Per-clip features |
-| GET | `/me/profile` | Aggregated features |
+| GET | `/me/profile` | Questionnaire + aggregated pose features |
+| PATCH | `/me/profile` | Update questionnaire / display name |
 | GET | `/me/history` | Feature trends |
-| GET | `/me/comp` | Matches + summary |
+| GET | `/me/comp` | Style + category matches + summary |
 | POST | `/me/comp` | Recompute matches + summary |
 
 All except `/health` require Supabase JWT.
@@ -479,7 +557,7 @@ All except `/health` require Supabase JWT.
 |-------|------|
 | Unit | Every feature pure function + angle helpers |
 | Integration | Process one fixture individual clip through pose → features → agg |
-| Comp | Fixed nba_players seed → known cosine ordering for a synthetic user vector |
+| Comp | Filtered NBA seed + known ordering for a synthetic short guard vs tall center; no 3P%↔release_angle mapping |
 | LLM | Prompt snapshot test (string contains required fields); optional live Gemini smoke (skipped in CI without key) |
 | Manual | One individual + one gameplay clip before Phase 8 UI |
 
@@ -495,8 +573,8 @@ All except `/health` require Supabase JWT.
 | 1 | Upload + Storage | 0 |
 | 2 | Pose (individual) | 1 |
 | 3 | Features + unit tests | 2 |
-| 4 | Aggregation | 3 |
-| 5 | NBA seed + cosine comp | 4 |
+| 4 | Aggregation + questionnaire | 3 |
+| 5 | NBA seed + style-space comp | 4 |
 | 6 | Gemini grounded summary | 5 |
 | 7 | Gameplay bbox + CSRT | 2–6 |
 | 8 | Dashboard UI | 1–7 |
