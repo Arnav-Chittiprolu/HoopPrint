@@ -16,6 +16,22 @@ class CompMatch(BaseModel):
     score: float
     style_vector: dict[str, float] = Field(default_factory=dict)
     kind: str = "style"
+    why: dict[str, Any] | None = None
+
+
+class Recommendation(BaseModel):
+    target: str
+    category: str | None = None
+    current_value: float | None = None
+    reference: float | None = None
+    reference_kind: str
+    action: str
+    because: str
+    gap: float | None = None
+    clip_count: int | None = None
+    match_name: str | None = None
+    cohort_median: float | None = None
+    cohort_n: int | None = None
 
 
 class CompResultResponse(BaseModel):
@@ -30,6 +46,9 @@ class CompResultResponse(BaseModel):
     overall: list[CompMatch]
     by_category: dict[str, list[CompMatch]] = Field(default_factory=dict)
     pool_size: int = 0
+    recommendations: list[Recommendation] = Field(default_factory=list)
+    height_z_us: float | None = None
+    height_z_nba: float | None = None
     summary: str | None = None
 
 

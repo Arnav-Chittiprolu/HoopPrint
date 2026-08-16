@@ -283,6 +283,39 @@ export interface CompMatch {
   score: number;
   style_vector: Record<string, number>;
   kind: string;
+  why?: {
+    label?: string;
+    filter?: {
+      position?: string | null;
+      user_height_in?: number;
+      nba_height_in?: number | null;
+      height_z_nba?: number | null;
+      band_in?: number;
+      height_delta_in?: number | null;
+    };
+    score_terms?: {
+      cosine?: number | null;
+      size_similarity?: number | null;
+      primary_skill_bonus?: number | null;
+      total?: number | null;
+    };
+    slots?: Array<{ dim: string; user: number; nba: number; gap: number }>;
+    omitted_slots?: string[];
+    note?: string;
+  } | null;
+}
+
+export interface Recommendation {
+  target: string;
+  category?: string | null;
+  current_value?: number | null;
+  reference?: number | null;
+  reference_kind: string;
+  action: string;
+  because: string;
+  gap?: number | null;
+  clip_count?: number | null;
+  match_name?: string | null;
 }
 
 export interface CompResult {
@@ -297,6 +330,9 @@ export interface CompResult {
   overall: CompMatch[];
   by_category: Partial<Record<"shot" | "pass" | "drive", CompMatch[]>>;
   pool_size: number;
+  recommendations?: Recommendation[];
+  height_z_us?: number | null;
+  height_z_nba?: number | null;
   summary: string | null;
 }
 
@@ -316,7 +352,7 @@ export async function getMyComp(): Promise<CompResult | null> {
 }
 
 export async function runMyComp(): Promise<CompResult> {
-  const res = await apiFetch("/me/comp", { method: "POST" });
+  const res = await apiFetch("/me/comp", { method: "POST" }, 60_000);
   if (!res.ok) {
     let message = `Failed to run comp (${res.status})`;
     try {

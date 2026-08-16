@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from app.config import get_settings
 from app.services.aggregate import compute_height_z, compute_height_z_nba
+from app.services.explain import (
+    annotate_matches_with_why,
+    build_llm_prompt,
+    build_recommendations,
+)
+from app.services.llm import get_llm_provider
 from app.services.nba_seed import DEFAULT_SEASON
 from app.services.style import (
     build_user_style_vector,
@@ -13,6 +21,44 @@ from app.services.style import (
     rank_matches,
 )
 from app.services.supabase_client import SupabaseService
+
+logger = logging.getLogger(__name__)
+
+
+class CompError(Exception):
+    """Raised when a comp cannot be computed."""
+
+
+async def _narrate_comp(
+    *,
+    questionnaire: dict[str, Any],
+    mechanics: dict[str, float],
+    user_style: dict[str, float],
+    top_match: dict | None,
+    why: dict | None,
+    recommendations: list[dict],
+) -> str | None:
+    try:
+        provider = get_llm_provider(get_settings())
+    except Exception:
+        return None
+    if provider is None:
+        return None
+    prompt = build_llm_prompt(
+        questionnaire=questionnaire,
+        mechanics=mechanics,
+        user_style=user_style,
+        top_match=top_match,
+        why=why,
+        recommendations=recommendations,
+    )
+    try:
+        text = await provider.generate(prompt)
+    except Exception as exc:
+        logger.warning("LLM narration failed: %s", exc)
+        return None
+    return text or None
+
 
 
 class CompError(Exception):
@@ -118,6 +164,14 @@ async def run_style_comp(
         evidence=evidence,
         top_k=top_k,
     )
+    ranked = annotate_matches_with_why(
+        ranked,
+        user_style=user_style,
+        user_height_in=height_in_f,
+        height_z_nba=height_z_nba,
+        primary_skill=str(primary_skill) if primary_skill else None,
+        evidence=evidence,
+    )
 
     mechanics = {
         row["feature_name"]: float(row["value"])
@@ -125,6 +179,31 @@ async def run_style_comp(
         if isinstance(row.get("feature_name"), str)
         and isinstance(row.get("value"), (int, float))
     }
+
+    recommendations = build_recommendations(
+        mechanics=mechanics,
+        user_style=user_style,
+        evidence=evidence,
+        overall_matches=ranked["overall"],
+        eligible=eligible,
+        agg=agg,
+    )
+
+    top_match = ranked["overall"][0] if ranked["overall"] else None
+    summary = await _narrate_comp(
+        questionnaire={
+            "height_in": height_in_f,
+            "height_z_us": height_z_us,
+            "height_z_nba": height_z_nba,
+            "position": position_s,
+            "primary_skill": primary_skill,
+        },
+        mechanics=mechanics,
+        user_style=user_style,
+        top_match=top_match,
+        why=(top_match or {}).get("why") if top_match else None,
+        recommendations=recommendations,
+    )
 
     matches_payload = {
         "season": season,
@@ -137,9 +216,10 @@ async def run_style_comp(
         "overall": ranked["overall"],
         "by_category": ranked["by_category"],
         "pool_size": ranked["pool_size"],
+        "recommendations": recommendations,
     }
 
-    row = await supabase.insert_comp_result(user_id, matches_payload, summary=None)
+    row = await supabase.insert_comp_result(user_id, matches_payload, summary=summary)
     return {
         "id": row.get("id"),
         "user_id": row.get("user_id", user_id),
@@ -166,4 +246,7 @@ def comp_from_stored_row(row: dict) -> dict[str, Any]:
         "overall": matches.get("overall") or [],
         "by_category": matches.get("by_category") or {},
         "pool_size": matches.get("pool_size") or 0,
+        "recommendations": matches.get("recommendations") or [],
+        "height_z_us": matches.get("height_z_us"),
+        "height_z_nba": matches.get("height_z_nba"),
     }

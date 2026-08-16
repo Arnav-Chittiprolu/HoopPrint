@@ -2,7 +2,7 @@
 
 Basketball Skill Analyzer + NBA Player Comp
 
-Full-stack web app: upload basketball footage → biomechanical features from pose → profile questionnaire (height, position, role) → style-space NBA comps from tracking/shot mix (not box-score proxies) → grounded LLM summary.
+Full-stack web app: upload basketball footage → biomechanical features from pose → profile questionnaire (height, position, role) → style-space NBA comps from tracking/shot mix (not box-score proxies) → grounded explanation of *why* the match + personalized drills from *this user’s* numbers.
 
 **Status:** Greenfield (empty repo). Build backend pipeline end-to-end before dashboard polish.
 
@@ -20,8 +20,9 @@ Full-stack web app: upload basketball footage → biomechanical features from po
 6. Pure functions compute biomechanical features (mechanics card).
 7. Features aggregate across the user’s clips over time.
 8. Questionnaire + pose fuse into a **style vector**; NBA pool is filtered by height/position; cosine / k-NN vs cached `nba_api` **tracking / shot-profile / bio** (style card).
-9. Gemini produces a short summary **only from provided numbers**.
-10. Dashboard shows overlay, feature charts, mechanics + style comps, writeup, history.
+9. System stores a **why-this-match** breakdown (filters, score terms, which style slots overlapped). Gemini narrates that breakdown **only from provided numbers** — it does not pick the player.
+10. Gemini (and/or a deterministic rec engine) produces **personalized** next-step drills from *this user’s* pose agg + *this match’s* tracking/shot mix + position-cohort gaps in the seeded NBA table. No generic “work on your jumper.”
+11. Dashboard shows overlay, feature charts, mechanics + style comps, **why this match**, **personalized recs**, history.
 
 ### 1.2 Hard constraints (never violate)
 
@@ -42,7 +43,8 @@ Full-stack web app: upload basketball footage → biomechanical features from po
 
 - Multi-object tracking / defender recognition / “good pass decision” relative to court context
 - Using an LLM (or a questionnaire self-pick) to choose the NBA comp
-- Fabricating stats or inventing game history in the summary
+- Fabricating stats, inventing game history, or giving generic coaching tips not tied to this user’s numbers
+- Using the LLM to invent *why* a player matched (the score breakdown is computed; the LLM only explains it)
 - Treating box-score shooting percentages as stand-ins for joint angles
 - Expanding pose feature set beyond the list in §5.1–5.3
 
@@ -122,7 +124,7 @@ HoopPrint/
 | `clip_features` | clip_id, feature_name, value, meta JSONB — **pose mechanics only** |
 | `user_profiles_agg` | user_id, feature_name, value, clip_count, updated_at — pose mechanics agg |
 | `nba_players` | name, season, position, height_in, style_vector JSONB, raw_stats JSONB |
-| `comp_results` | user_id, matches JSONB (overall + per-category), summary text, created_at |
+| `comp_results` | user_id, matches JSONB (overall + per-category + why + recs), summary text, created_at |
 
 ### 4.2 Clip status machine
 
@@ -227,7 +229,8 @@ Upload → Storage + clips row
   → Feature functions (mechanics) + height calibration
   → Aggregate user profile
   → Style vector (form + pose) → filter NBA pool → cosine vs nba_players.style_vector
-  → Gemini grounded summary
+  → Why-this-match breakdown (deterministic) + Gemini narration
+  → Personalized recs from user numbers vs match + NBA position cohort
   → Persist comp_results
 ```
 
@@ -416,32 +419,68 @@ Do not start a phase until the previous phase’s **exit criteria** pass.
 
 ---
 
-### Phase 6 — Grounded LLM summary (Gemini)
+### Phase 6 — Why-this-match explanation + personalized recs (Gemini)
 
-**Goal:** 2–3 paragraph explanation + 2–3 tips, strictly grounded in numbers.
+**Goal:** Every style comp must answer two questions in the user’s numbers: (1) *why this player*, (2) *what should I do next that is specific to me*. No generic coaching. LLM never chooses the match.
 
-#### 6.1 Provider abstraction
+#### 6.1 Deterministic “why this match” (required; no LLM)
 
-- [ ] `LLMProvider` interface: `generate(prompt) → str`
-- [ ] `GeminiProvider` (default)
-- [ ] Stub hooks for Anthropic / OpenAI (env-switched, not required for MVP)
+Attach a `why` object on each overall / category match before any LLM call:
 
-#### 6.2 Prompt template
+- Filter: `position`, `height_in` vs NBA listed height, `height_z_nba` vs position mean, band width
+- Score terms: cosine on shared slots, size similarity, `primary_skill` bonus (the same formula as Phase 5)
+- Slot overlap: for each shared style dim, user value, NBA value, absolute gap, contribution rank
+- Evidence: which clip types existed (`shot` / `pass` / `drive`) and which slots were omitted because of no clips
+- Explicit label: **style similarity**, not identical motion / not joint-angle match
+
+Same inputs → same `why`. Unit-test a short guard vs a 71" guard: `why` must mention position + height band + `size` / `perimeter_vs_rim` gaps, never 3P% ↔ `release_angle`.
+
+#### 6.2 Personalized recs from data (not generic tips)
+
+Build a rec candidate list **from numbers**, then let Gemini phrase only those candidates.
+
+Sources (all already in DB / agg — no extra “who to play like” input):
+
+| Signal | How it becomes a rec |
+|--------|----------------------|
+| User pose vs typical ranges | e.g. `shot_arc = 0` with `release_angle ≈ 44°` on n shot clips → one rec about follow-through / arc, citing those values |
+| User style slot vs **this match** | largest gaps on shared slots (user `perimeter_vs_rim` vs player’s 3-rate / paint share) |
+| User vs **position cohort** in `nba_players` | percentile of user’s size / shot-mix proxy among seeded players at the same `position` + height band |
+| Missing evidence | if no drive clips, rec is “upload a drive clip so drive_burst can be scored” — not fake drive advice |
+
+Each rec must include: `target` (feature or style slot), `current_value`, `reference` (match or cohort percentile), `action` (one specific drill / clip to record next), `because` (the numbers). Rank by largest honest gap. Cap 3 recs. Drop any rec that would require a category with no clips.
+
+Do **not** train a separate model for MVP. The “trained on data” part is the seeded NBA roster + this user’s agg. Optional later: fit simple position-conditional percentiles once at seed time and store on `nba_players` / a small `nba_cohort_stats` row.
+
+#### 6.3 Provider abstraction
+
+- [x] `LLMProvider` interface: `generate(prompt) → str`
+- [x] `GeminiProvider` (default)
+- [x] Stub hooks for Anthropic / OpenAI (env-switched, not required for MVP)
+
+#### 6.4 Prompt template
 
 Must include:
 
-- Questionnaire context (`height_in`, `height_z` interpretation, position, primary skill)
-- User computed pose feature values (mechanics)
-- Matched player real tracking / shot-profile / bio values (style)
-- Similarity score(s) and whether the match is style vs mechanics
-- Explicit instruction: *Only reference the numeric values provided below. Do not invent statistics, game history, or claims not present in this data. Do not say the user’s elbow angle equals a shooting percentage.*
+- Questionnaire context (`height_in`, `height_z` vs US male, `height_z_nba` vs position, position, primary skill)
+- User pose feature values + clip counts (mechanics)
+- Matched player tracking / shot-profile / bio (style) + `why` breakdown from §6.1
+- Ranked rec candidates from §6.2 (already numeric)
+- Similarity score(s) and that the match is **style**, not mechanics
+- Explicit instruction: *Only reference the numeric values provided below. Do not invent statistics, game history, or drills not implied by these rec candidates. Do not say the user’s elbow angle equals a shooting percentage. Do not give generic advice (“work on your jumper”, “be more aggressive”) unless a candidate row supports it with numbers.*
 
-#### 6.3 Output + storage
+Ask for structured output:
 
-- [ ] Parse/store summary on `comp_results`
-- [ ] Fail closed if LLM returns empty / errors (comp still valid without summary)
+1. **Why this match** — 1–2 short paragraphs walking through filter + top overlapping / differing slots
+2. **Personalized next steps** — 2–3 bullets, each citing a candidate’s `current_value` / `reference`
 
-**Exit criteria:** Summary mentions only numbers present in the prompt; changing a feature changes the advice accordingly in a smoke test.
+#### 6.5 Output + storage
+
+- [x] Persist `why` + `recommendations` JSON on `comp_results.matches` (usable even if LLM fails)
+- [x] Store Gemini narration on `comp_results.summary` (or split `explanation` / `recs_text`)
+- [x] Fail closed if LLM returns empty / errors (comp + why + numeric recs still valid)
+
+**Exit criteria:** Same match always produces the same `why` JSON; summary only mentions numbers in the prompt; changing `shot_arc` or height changes both the explanation and the rec list in a smoke test; a user with only shot clips never gets drive drills.
 
 ---
 
@@ -481,8 +520,10 @@ Must include:
 - [ ] Video + keypoint overlay visualization
 - [ ] Feature breakdown charts (mechanics from video)
 - [ ] NBA **style** comp card (name, score, overlapping shot mix / tracking / height)
+- [ ] **Why this match** — filter + slot gaps from Phase 6 `why` JSON, plus Gemini narration
+- [ ] **Personalized recs** — 2–3 numbered actions with this user’s values (not generic tips)
 - [ ] Mechanics summary (pose features; not claimed as NBA joint angles)
-- [ ] LLM writeup
+- [ ] LLM writeup (explanation + recs; hide gracefully if summary is null)
 
 #### 8.2 History
 
@@ -543,8 +584,8 @@ Must include:
 | GET | `/me/profile` | Questionnaire + aggregated pose features |
 | PATCH | `/me/profile` | Update questionnaire / display name |
 | GET | `/me/history` | Feature trends |
-| GET | `/me/comp` | Style + category matches + summary |
-| POST | `/me/comp` | Recompute matches + summary |
+| GET | `/me/comp` | Style + category matches + why + recs + summary |
+| POST | `/me/comp` | Recompute matches + why + recs + summary |
 
 All except `/health` require Supabase JWT.
 
@@ -557,7 +598,7 @@ All except `/health` require Supabase JWT.
 | Unit | Every feature pure function + angle helpers |
 | Integration | Process one fixture individual clip through pose → features → agg |
 | Comp | Filtered NBA seed + known ordering for a synthetic short guard vs tall center; no 3P%↔release_angle mapping |
-| LLM | Prompt snapshot test (string contains required fields); optional live Gemini smoke (skipped in CI without key) |
+| LLM | Prompt snapshot includes `why` + rec candidates; summary cites only those numbers; optional live Gemini smoke (skipped in CI without key) |
 | Manual | One individual + one gameplay clip before Phase 8 UI |
 
 **Build rule from brief:** Do not build the frontend dashboard until the backend pipeline works on CLI/API for at least one full example of each `source_type`.
@@ -574,7 +615,7 @@ All except `/health` require Supabase JWT.
 | 3 | Features + unit tests | 2 |
 | 4 | Aggregation + questionnaire | 3 |
 | 5 | NBA seed + style-space comp | 4 |
-| 6 | Gemini grounded summary | 5 |
+| 6 | Why-this-match + personalized recs (Gemini) | 5 |
 | 7 | Gameplay bbox + CSRT | 2–6 |
 | 8 | Dashboard UI | 1–7 |
 | 9 | Harden + deploy (free) | 8 |

@@ -6,7 +6,79 @@ import {
   runMyComp,
   type CompMatch,
   type CompResult,
+  type Recommendation,
 } from "@/lib/api";
+
+function WhyBlock({ match }: { match: CompMatch }) {
+  const why = match.why;
+  if (!why) return null;
+  const filter = why.filter;
+  const terms = why.score_terms;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-zinc-800">Why {match.name}</h3>
+      <p className="text-xs text-zinc-500">
+        {why.note ?? "Style similarity — not identical motion."}
+      </p>
+      {filter ? (
+        <p className="text-sm text-zinc-700">
+          Same position ({filter.position}) and height within ±{filter.band_in}" (
+          you {filter.user_height_in}", them {filter.nba_height_in}").
+        </p>
+      ) : null}
+      {terms ? (
+        <p className="font-mono text-xs text-zinc-600">
+          cosine={terms.cosine ?? "—"} · size={terms.size_similarity ?? "—"} · skill=
+          {terms.primary_skill_bonus ?? "—"} · total={terms.total ?? match.score}
+        </p>
+      ) : null}
+      {why.slots?.length ? (
+        <ul className="space-y-1 text-xs text-zinc-700">
+          {why.slots.map((slot) => (
+            <li key={slot.dim}>
+              {slot.dim}: you {slot.user.toFixed(2)} vs {slot.nba.toFixed(2)} (gap{" "}
+              {slot.gap.toFixed(2)})
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {why.omitted_slots?.length ? (
+        <p className="text-xs text-zinc-500">
+          Omitted (no clip evidence): {why.omitted_slots.join(", ")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function RecsBlock({ recs }: { recs: Recommendation[] }) {
+  if (!recs.length) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-zinc-800">Personalized next steps</h3>
+      <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm text-zinc-800">
+        {recs.map((rec) => (
+          <li key={rec.target}>
+            <p>{rec.action}</p>
+            <p className="text-xs text-zinc-500">{rec.because}</p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function SummaryBlock({ summary }: { summary: string | null }) {
+  if (!summary) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-zinc-800">Writeup</h3>
+      <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-zinc-700">
+        {summary}
+      </pre>
+    </div>
+  );
+}
 
 function MatchList({ title, matches }: { title: string; matches: CompMatch[] }) {
   if (!matches.length) return null;
@@ -98,6 +170,7 @@ export function CompPanel() {
         </button>
         <p className="text-xs text-zinc-500">
           Style similarity from questionnaire + pose — not identical motion, not an LLM pick.
+          Why + recs are computed from your numbers; Gemini only narrates them if GEMINI_API_KEY is set.
         </p>
       </div>
 
@@ -123,6 +196,10 @@ export function CompPanel() {
           {comp.by_category.drive ? (
             <MatchList title="Drive style" matches={comp.by_category.drive} />
           ) : null}
+
+          {comp.overall[0] ? <WhyBlock match={comp.overall[0]} /> : null}
+          <RecsBlock recs={comp.recommendations ?? []} />
+          <SummaryBlock summary={comp.summary} />
 
           {Object.keys(comp.mechanics).length > 0 ? (
             <div>

@@ -86,7 +86,14 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 ## What’s next
 
-Phase 6 — Gemini grounded summary from style comps + mechanics numbers.
+Phase 7 — Gameplay bbox + CSRT (single-player tracking).
+
+### Phase 6 — Why this match + personalized recs
+
+After `POST /me/comp`, each match includes a computed `why` (filter + score terms + slot gaps). Recs come from your pose vs this match and the NBA position cohort. Gemini narrates those JSON blobs only.
+
+- Set `GEMINI_API_KEY` in `backend/.env` (optional — why/recs still save if unset)
+- Dashboard **NBA style comps** shows why, next steps, and writeup
 
 ### Phase 5 — NBA style-space comps
 
