@@ -153,6 +153,32 @@ class SupabaseService:
             if response.status_code >= 400:
                 raise RuntimeError(f"Keypoint insert failed: {response.status_code} {response.text}")
 
+    async def get_player_box(self, clip_id: str) -> dict | None:
+        url = f"{self.base_url}/rest/v1/player_boxes?clip_id=eq.{clip_id}&limit=1"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(f"Player box fetch failed: {response.status_code} {response.text}")
+            rows = response.json()
+            return rows[0] if rows else None
+
+    async def upsert_player_box(self, clip_id: str, x: float, y: float, w: float, h: float) -> dict:
+        url = f"{self.base_url}/rest/v1/player_boxes?on_conflict=clip_id"
+        payload = {"clip_id": clip_id, "x": x, "y": y, "w": w, "h": h}
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.post(
+                url,
+                headers={
+                    **self.headers,
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+                json=payload,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Player box upsert failed: {response.status_code} {response.text}")
+            data = response.json()
+            return data[0] if isinstance(data, list) else data
+
     async def list_keypoints(self, clip_id: str) -> list[dict]:
         url = (
             f"{self.base_url}/rest/v1/keypoints"

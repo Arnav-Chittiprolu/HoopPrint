@@ -146,6 +146,31 @@ def test_drive_features_body_lengths():
     assert features["change_of_direction_angle"]["value"] >= 0.0
 
 
+def test_drive_features_two_frames():
+    frames = [
+        {
+            "frame_index": 0,
+            "keypoints": _standing(
+                left_hip=(0.36, 0.58),
+                right_hip=(0.44, 0.58),
+                left_ankle=(0.36, 0.90),
+                right_ankle=(0.44, 0.90),
+            ),
+        },
+        {
+            "frame_index": 2,
+            "keypoints": _standing(
+                left_hip=(0.46, 0.58),
+                right_hip=(0.54, 0.58),
+                left_ankle=(0.46, 0.90),
+                right_ankle=(0.54, 0.90),
+            ),
+        },
+    ]
+    features = {row["feature_name"]: row for row in extract_drive_features(parse_frames(frames))}
+    assert features["first_step_burst"]["value"] > 0.0
+
+
 def test_extract_clip_features_dispatches_shot():
     frames = [
         {"frame_index": 0, "keypoints": _standing(right_wrist=(0.62, 0.50))},

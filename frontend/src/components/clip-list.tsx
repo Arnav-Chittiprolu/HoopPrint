@@ -5,9 +5,12 @@ import {
   getClipOverlayUrl,
   listClips,
   processClip,
+  updateClipType,
   type Clip,
   type ClipStatus,
+  type ClipType,
 } from "@/lib/api";
+import { BboxPicker } from "@/components/bbox-picker";
 
 const STATUS_LABELS: Record<ClipStatus, string> = {
   uploaded: "Uploaded",
@@ -38,11 +41,10 @@ function formatDate(iso: string) {
 
 function canRetry(clip: Clip) {
   return (
-    clip.source_type === "individual" &&
-    (clip.status === "processing" ||
-      clip.status === "failed" ||
-      clip.status === "uploaded" ||
-      clip.status === "done")
+    clip.status === "processing" ||
+    clip.status === "failed" ||
+    clip.status === "done" ||
+    (clip.source_type === "individual" && clip.status === "uploaded")
   );
 }
 
@@ -130,10 +132,8 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
           setClips(next);
           setError(null);
         }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not refresh clips");
-        }
+      } catch {
+        // Pose can stall a poll; keep showing Processing instead of a timeout banner.
       }
     }, POLL_MS);
 
@@ -146,19 +146,39 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
   async function onRetry(clipId: string) {
     setRetryingId(clipId);
     setError(null);
+    setClips((current) =>
+      current.map((clip) =>
+        clip.id === clipId
+          ? { ...clip, status: "processing", error_message: null }
+          : clip,
+      ),
+    );
     try {
       await processClip(clipId);
-      setClips((current) =>
-        current.map((clip) =>
-          clip.id === clipId
-            ? { ...clip, status: "processing", error_message: null }
-            : clip,
-        ),
-      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Retry failed");
     } finally {
       setRetryingId(null);
+    }
+  }
+
+  async function onChangeType(clipId: string, clipType: ClipType) {
+    setError(null);
+    const previous = clips.find((clip) => clip.id === clipId)?.clip_type;
+    setClips((current) =>
+      current.map((clip) => (clip.id === clipId ? { ...clip, clip_type: clipType } : clip)),
+    );
+    try {
+      await updateClipType(clipId, clipType);
+    } catch (err) {
+      if (previous) {
+        setClips((current) =>
+          current.map((clip) =>
+            clip.id === clipId ? { ...clip, clip_type: previous } : clip,
+          ),
+        );
+      }
+      setError(err instanceof Error ? err.message : "Could not change clip type");
     }
   }
 
@@ -176,7 +196,9 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
         </p>
       ) : null}
       {hasActive ? (
-        <p className="mb-3 text-xs text-zinc-500">Pose extraction in progress… this can take a minute.</p>
+        <p className="mb-3 text-xs text-zinc-500">
+          Pose extraction in progress… 4K clips can take a couple of minutes.
+        </p>
       ) : null}
       <ul className="divide-y divide-zinc-100">
         {clips.map((clip) => (
@@ -184,7 +206,22 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-medium capitalize text-zinc-900">
-                  {clip.clip_type} · {clip.source_type}
+                  <label className="inline-flex items-center gap-1">
+                    <span className="sr-only">Clip type</span>
+                    <select
+                      value={clip.clip_type}
+                      onChange={(event) =>
+                        onChangeType(clip.id, event.target.value as ClipType)
+                      }
+                      className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-sm font-medium capitalize text-zinc-900 outline-none ring-orange-600 focus:ring-2"
+                    >
+                      <option value="shot">shot</option>
+                      <option value="pass">pass</option>
+                      <option value="drive">drive</option>
+                    </select>
+                    <span className="text-zinc-400">·</span>
+                    <span>{clip.source_type}</span>
+                  </label>
                 </p>
                 <p className="text-xs text-zinc-500">{formatDate(clip.created_at)}</p>
                 {clip.status === "failed" && clip.error_message ? (
@@ -215,6 +252,20 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
                 </span>
               </div>
             </div>
+            {clip.status === "awaiting_bbox" && clip.source_type === "gameplay" ? (
+              <BboxPicker
+                clipId={clip.id}
+                onSaved={() => {
+                  setClips((current) =>
+                    current.map((item) =>
+                      item.id === clip.id
+                        ? { ...item, status: "processing", error_message: null }
+                        : item,
+                    ),
+                  );
+                }}
+              />
+            ) : null}
             {clip.status === "done" ? <PoseOverlayPlayer clipId={clip.id} /> : null}
           </li>
         ))}

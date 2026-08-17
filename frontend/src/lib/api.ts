@@ -71,7 +71,7 @@ export async function apiFetch(
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error("Request timed out — try again or use a smaller clip");
+      throw new Error("Request timed out");
     }
     if (isNetworkError(err)) {
       throw new Error(
@@ -139,9 +139,70 @@ export async function processClip(clipId: string): Promise<{
   status: ClipStatus;
   frame_count: number;
 }> {
-  const res = await apiFetch(`/clips/${clipId}/process`, { method: "POST" });
+  try {
+    const res = await apiFetch(`/clips/${clipId}/process`, { method: "POST" }, 8_000);
+    if (!res.ok) {
+      let message = `Failed to process clip (${res.status})`;
+      try {
+        message = parseApiError(await res.json(), message);
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+    return res.json();
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Request timed out")) {
+      return { clip_id: clipId, status: "processing", frame_count: 0 };
+    }
+    throw err;
+  }
+}
+
+export async function updateClipType(clipId: string, clipType: ClipType): Promise<Clip> {
+  const res = await apiFetch(`/clips/${clipId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clip_type: clipType }),
+  });
   if (!res.ok) {
-    let message = `Failed to process clip (${res.status})`;
+    let message = `Failed to update clip type (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function getClipFirstFrameUrl(clipId: string): Promise<string> {
+  const res = await apiFetch(`/clips/${clipId}/first-frame`, {}, 60_000);
+  if (!res.ok) {
+    let message = `Failed to load first frame (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function saveClipBbox(
+  clipId: string,
+  box: { x: number; y: number; w: number; h: number },
+): Promise<{ status: ClipStatus }> {
+  const res = await apiFetch(`/clips/${clipId}/bbox`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(box),
+  });
+  if (!res.ok) {
+    let message = `Failed to save player box (${res.status})`;
     try {
       message = parseApiError(await res.json(), message);
     } catch {

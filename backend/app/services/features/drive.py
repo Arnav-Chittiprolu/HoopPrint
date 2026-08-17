@@ -13,8 +13,11 @@ def extract_drive_features(
     *,
     height_in: float | None = None,
 ) -> list[dict]:
-    if len(frames) < 3:
-        raise ValueError("Need at least 3 pose frames for drive features")
+    if len(frames) < 2:
+        raise ValueError(
+            "Need a longer stretch of you in frame for drive features — "
+            "redraw a tight box around yourself and retry"
+        )
 
     hips: list[np.ndarray | None] = [mid_hip(lookup) for _, lookup in frames]
     standing = mean_standing_height(frames) or 1.0

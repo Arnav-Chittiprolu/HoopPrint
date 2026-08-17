@@ -86,7 +86,15 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 ## What’s next
 
-Phase 7 — Gameplay bbox + CSRT (single-player tracking).
+Phase 8 — Dashboard polish (charts, history, mobile bbox).
+
+### Phase 7 — Gameplay bbox + tracking
+
+Upload as **gameplay** → draw a box around yourself on the first frame → CSRT (or template fallback) tracks that person only → pose on the crop → same features/comps as individual clips.
+
+- `GET /clips/{id}/first-frame`
+- `POST /clips/{id}/bbox`
+- Lost track for 5 frames → skip pose on those frames (no second person)
 
 ### Phase 6 — Why this match + personalized recs
 
@@ -145,6 +153,6 @@ MediaPipe Pose on individual clips → `keypoints` rows in Postgres.
 
 Dashboard upload form → `POST /clips` → Supabase Storage + `clips` row.
 
-- mp4/mov, max ~20s, 50MB
+- mp4/mov, max ~25s, 50MB
 - Individual clips → status `uploaded`
 - Gameplay clips → status `awaiting_bbox` (bbox UI in Phase 7)

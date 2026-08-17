@@ -490,22 +490,22 @@ Ask for structured output:
 
 #### 7.1 First frame + bbox
 
-- [ ] `GET /clips/{id}/first-frame` → JPEG
-- [ ] Frontend: draw rectangle on first frame
-- [ ] `POST /clips/{id}/bbox` → save `player_boxes`, kick processing
+- [x] `GET /clips/{id}/first-frame` → JPEG
+- [x] Frontend: draw rectangle on first frame
+- [x] `POST /clips/{id}/bbox` → save `player_boxes`, kick processing
 
 #### 7.2 Tracker
 
-- [ ] Init OpenCV CSRT (or similar) with bbox
-- [ ] Track frame-to-frame
-- [ ] Confidence / lost-box check: if low for N consecutive frames → skip those frames
-- [ ] Never invent a second tracked person
+- [x] Init OpenCV CSRT (or similar) with bbox
+- [x] Track frame-to-frame
+- [x] Confidence / lost-box check: if low for N consecutive frames → skip those frames
+- [x] Never invent a second tracked person
 
 #### 7.3 Pose on crop
 
-- [ ] Crop (or mask) to tracked box before MediaPipe
-- [ ] Store `track_confidence` with keypoints
-- [ ] Reuse Phases 3–6 unchanged downstream
+- [x] Crop (or mask) to tracked box before MediaPipe
+- [x] Store `track_confidence` with keypoints
+- [x] Reuse Phases 3–6 unchanged downstream
 
 **Exit criteria:** One gameplay clip with manual bbox produces keypoints only for the boxed player; when tracker is intentionally lost, skipped frames have no keypoints (or are marked skipped).
 

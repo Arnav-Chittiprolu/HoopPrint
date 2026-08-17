@@ -77,8 +77,8 @@ export default async function DashboardPage() {
         <div className="rounded-lg border border-zinc-200 bg-white p-5">
           <h2 className="text-lg font-medium text-zinc-900">Upload clip</h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Short mp4 (~25s max). Individual drills process immediately; gameplay
-            clips will ask you to box yourself in Phase 7.
+            Short mp4 (~25s max). Individual drills process immediately. Gameplay
+            clips ask you to box yourself on the first frame, then track only that person.
           </p>
           <div className="mt-4">
             <ClipUploadForm />

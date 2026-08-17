@@ -19,7 +19,7 @@ class GeminiProvider:
         self,
         api_key: str,
         *,
-        model: str = "gemini-2.0-flash",
+        model: str = "gemini-2.5-flash",
         timeout: float = 25.0,
     ) -> None:
         self.api_key = api_key
