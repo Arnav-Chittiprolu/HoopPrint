@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   getMyProfile,
   updateMyProfile,
@@ -20,6 +21,7 @@ const emptyForm: ProfileQuestionnaire = {
 };
 
 export function ProfileQuestionnaireForm() {
+  const router = useRouter();
   const [form, setForm] = useState<ProfileQuestionnaire>(emptyForm);
   const [aggSummary, setAggSummary] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +76,7 @@ export function ProfileQuestionnaireForm() {
           ? "Profile saved"
           : `Profile saved · height_z ${profile.questionnaire.height_z.toFixed(2)}`,
       );
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {

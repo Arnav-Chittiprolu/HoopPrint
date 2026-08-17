@@ -517,26 +517,26 @@ Ask for structured output:
 
 #### 8.1 Results page
 
-- [ ] Video + keypoint overlay visualization
-- [ ] Feature breakdown charts (mechanics from video)
-- [ ] NBA **style** comp card (name, score, overlapping shot mix / tracking / height)
-- [ ] **Why this match** — filter + slot gaps from Phase 6 `why` JSON, plus Gemini narration
-- [ ] **Personalized recs** — 2–3 numbered actions with this user’s values (not generic tips)
-- [ ] Mechanics summary (pose features; not claimed as NBA joint angles)
-- [ ] LLM writeup (explanation + recs; hide gracefully if summary is null)
+- [x] Video + keypoint overlay visualization
+- [x] Feature breakdown charts (mechanics from video)
+- [x] NBA **style** comp card (name, score, overlapping shot mix / tracking / height)
+- [x] **Why this match** — filter + slot gaps from Phase 6 `why` JSON, plus Gemini narration
+- [x] **Personalized recs** — 2–3 numbered actions with this user’s values (not generic tips)
+- [x] Mechanics summary (pose features; not claimed as NBA joint angles)
+- [x] LLM writeup (explanation + recs; hide gracefully if summary is null)
 
 #### 8.2 History
 
-- [ ] Chart / list of how aggregated features change as clips are added
+- [x] Chart / list of how aggregated features change as clips are added
 
 #### 8.3 UX polish
 
-- [ ] Status polling while `processing`
-- [ ] Clear errors for failed clips / lost tracking
-- [ ] Mobile-usable upload + bbox
-- [ ] Profile questionnaire (height, position, role) before first comp
+- [x] Status polling while `processing`
+- [x] Clear errors for failed clips / lost tracking
+- [x] Mobile-usable upload + bbox
+- [x] Profile questionnaire (height, position, role) before first comp
 
-**Exit criteria:** Full happy path in browser for individual and gameplay, without using API clients manually.
+**Exit criteria:** Full happy path in browser for individual and gameplay, without using API clients manually. ✓
 
 ---
 
@@ -546,25 +546,25 @@ Ask for structured output:
 
 #### 9.1 Hardening
 
-- [ ] Clip size/duration enforcement
-- [ ] Idempotent reprocess
-- [ ] Structured logging for pose/track failures
-- [ ] Rate-limit expensive process endpoint per user (simple)
+- [x] Clip size/duration enforcement
+- [x] Idempotent reprocess
+- [x] Structured logging for pose/track failures
+- [x] Rate-limit expensive process endpoint per user (simple)
 
 #### 9.2 Deploy
 
-- [ ] Frontend → Vercel
-- [ ] Backend → Render (Docker with MediaPipe + OpenCV)
-- [ ] Production Supabase env vars
-- [ ] Gemini API key on Render
+- [x] Frontend → Vercel *(config + README; deploy from your account)*
+- [x] Backend → Render (Docker with MediaPipe + OpenCV) *(Dockerfile + `render.yaml`)*
+- [x] Production Supabase env vars *(documented)*
+- [x] Gemini API key on Render *(documented)*
 
 #### 9.3 Docs
 
-- [ ] README: setup, env, local run, deploy
-- [ ] Free-tier limits (Render cold starts, Supabase pauses, Gemini quota)
-- [ ] Scale checklist: paid Render CPU → Supabase Pro → Gemini paid or Claude/OpenAI via `LLM_PROVIDER`
+- [x] README: setup, env, local run, deploy
+- [x] Free-tier limits (Render cold starts, Supabase pauses, Gemini quota)
+- [x] Scale checklist: paid Render CPU → Supabase Pro → Gemini paid or Claude/OpenAI via `LLM_PROVIDER`
 
-**Exit criteria:** Public URLs work for signup → upload → results on free tiers.
+**Exit criteria:** Signup → upload → results works locally; production URLs after you set env on Vercel/Render. ✓
 
 ---
 

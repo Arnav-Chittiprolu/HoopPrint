@@ -16,6 +16,7 @@ from app.services.clip_processor import ClipProcessingError, process_clip as run
 from app.services.clip_validation import validate_clip_upload
 from app.services.pose_extraction import extract_first_frame_jpeg
 from app.services.pose_overlay import overlay_storage_path
+from app.services.rate_limit import inflight_clips, process_limiter, upload_limiter
 from app.services.supabase_client import SupabaseService
 from app.services.track import validate_norm_box
 
@@ -39,22 +40,56 @@ async def _run_process_clip(clip_id: str, user_id: str) -> None:
     try:
         result = await run_clip_pipeline(clip_id, user_id)
         logger.info(
-            "Processed clip %s (%s frames, %s features)",
-            clip_id,
-            result["frame_count"],
-            result.get("feature_count", 0),
+            "clip_process_done",
+            extra={
+                "event": "clip_process_done",
+                "clip_id": clip_id,
+                "user_id": user_id,
+                "frames": result["frame_count"],
+                "features": result.get("feature_count", 0),
+            },
         )
     except ClipProcessingError as exc:
-        logger.warning("Background processing failed for clip %s: %s", clip_id, exc)
+        logger.warning(
+            "clip_process_failed",
+            extra={
+                "event": "clip_process_failed",
+                "clip_id": clip_id,
+                "user_id": user_id,
+                "reason": str(exc),
+            },
+        )
     except Exception:
-        logger.exception("Unexpected processing error for clip %s", clip_id)
+        logger.exception(
+            "clip_process_crash",
+            extra={"event": "clip_process_crash", "clip_id": clip_id, "user_id": user_id},
+        )
+    finally:
+        inflight_clips.release(clip_id)
 
 
-def _spawn_process_clip(clip_id: str, user_id: str) -> None:
-    """Run pose off the request so Retry/upload can return before extraction finishes."""
+def _spawn_process_clip(clip_id: str, user_id: str) -> bool:
+    """Start pose off-request. Returns False if this clip is already running."""
+    if not inflight_clips.acquire(clip_id):
+        logger.info(
+            "clip_process_idempotent_skip",
+            extra={"event": "clip_process_idempotent_skip", "clip_id": clip_id, "user_id": user_id},
+        )
+        return False
     task = asyncio.create_task(_run_process_clip(clip_id, user_id))
     _process_jobs.add(task)
     task.add_done_callback(_process_jobs.discard)
+    return True
+
+
+def _enforce_process_rate(user_id: str) -> None:
+    allowed, retry_after = process_limiter.allow(user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many process requests. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 @router.post("", response_model=ClipCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -65,6 +100,16 @@ async def create_clip(
     user: CurrentUser = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase),
 ) -> ClipCreateResponse:
+    allowed, retry_after = upload_limiter.allow(user.id)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many uploads. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    if source_type == SourceType.individual:
+        _enforce_process_rate(user.id)
+
     content, content_type = await validate_clip_upload(file)
 
     clip_id = uuid4()
@@ -189,6 +234,11 @@ async def kick_process_clip(
     if clip is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
 
+    if inflight_clips.contains(clip_id):
+        return ClipProcessResponse(
+            clip_id=clip_id, status=ClipStatus.processing.value, frame_count=0
+        )
+
     if clip["source_type"] == SourceType.gameplay.value:
         box = await supabase.get_player_box(clip_id)
         if box is None:
@@ -201,6 +251,8 @@ async def kick_process_clip(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported clip source type",
         )
+
+    _enforce_process_rate(user.id)
 
     try:
         await supabase.update_clip(
@@ -394,6 +446,18 @@ async def save_bbox(
         box = validate_norm_box(body.x, body.y, body.w, body.h)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if inflight_clips.contains(clip_id):
+        return BboxResponse(
+            clip_id=clip_id,
+            x=box.x,
+            y=box.y,
+            w=box.w,
+            h=box.h,
+            status=ClipStatus.processing.value,
+        )
+
+    _enforce_process_rate(user.id)
 
     try:
         await supabase.upsert_player_box(clip_id, box.x, box.y, box.w, box.h)

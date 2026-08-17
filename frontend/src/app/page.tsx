@@ -25,8 +25,8 @@ export default function HomePage() {
           Basketball skill analysis from your own footage.
         </h1>
         <p className="mt-4 max-w-lg text-base leading-7 text-zinc-600">
-          Upload a clip, extract pose mechanics, match an NBA comp from real
-          stats, and get a grounded summary. Phase 0: auth shell only.
+          Upload a clip, extract pose mechanics, match an NBA style comp from real
+          stats, and get a grounded why + next steps.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Link

@@ -362,6 +362,15 @@ def extract_pose_keypoints_tracked_from_path(
                     current_box = new_box
                 else:
                     consecutive_lost += 1
+                    if consecutive_lost == lost_skip:
+                        logger.warning(
+                            "tracker_lost",
+                            extra={
+                                "event": "tracker_lost",
+                                "frame_index": frame_index,
+                                "reason": "box lost for consecutive frames; skipping pose",
+                            },
+                        )
                 _maybe_pose(frame_bgr, current_box, frame_index)
                 if frame_index % 60 == 0:
                     logger.info(

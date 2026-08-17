@@ -75,7 +75,14 @@ async def extract_pose_isolated(
 
     if proc.returncode != 0:
         detail = (stderr or stdout or b"").decode("utf-8", errors="replace")[-800:]
-        logger.warning("Pose subprocess failed (%s): %s", proc.returncode, detail)
+        logger.warning(
+            "pose_subprocess_failed",
+            extra={
+                "event": "pose_subprocess_failed",
+                "returncode": proc.returncode,
+                "reason": detail,
+            },
+        )
         raise RuntimeError("Pose extractor crashed")
 
     if not out_path.is_file():

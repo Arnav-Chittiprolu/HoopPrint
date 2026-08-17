@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from app.services.pose_job import extract_pose_isolated
 from app.services.pose_overlay import overlay_storage_path, prepare_working_video, render_pose_overlay_video
 from app.services.supabase_client import SupabaseService
 from app.services.track import NormBox
+
+logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUSES = {
     ClipStatus.uploaded.value,
@@ -187,6 +190,15 @@ async def process_clip(clip_id: str, user_id: str | None = None) -> dict:
         }
     except Exception as exc:
         message = str(exc) if str(exc) else exc.__class__.__name__
+        logger.warning(
+            "clip_pipeline_failed",
+            extra={
+                "event": "clip_pipeline_failed",
+                "clip_id": clip_id,
+                "user_id": clip.get("user_id") if clip else user_id,
+                "reason": message[:500],
+            },
+        )
         await supabase.update_clip(
             clip_id,
             {"status": ClipStatus.failed.value, "error_message": message[:500]},

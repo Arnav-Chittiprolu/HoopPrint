@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getClipFirstFrameUrl, saveClipBbox } from "@/lib/api";
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -43,7 +43,7 @@ export function BboxPicker({
     };
   }, [clipId]);
 
-  function localPoint(event: MouseEvent<HTMLDivElement>) {
+  function localPoint(event: PointerEvent<HTMLDivElement>) {
     const img = imgRef.current;
     if (!img) return null;
     const bounds = img.getBoundingClientRect();
@@ -55,14 +55,16 @@ export function BboxPicker({
     };
   }
 
-  function onPointerDown(event: MouseEvent<HTMLDivElement>) {
+  function onPointerDown(event: PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
     const point = localPoint(event);
     if (!point) return;
     setDragStart(point);
     setRect({ x: point.x, y: point.y, w: 0, h: 0 });
   }
 
-  function onPointerMove(event: MouseEvent<HTMLDivElement>) {
+  function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     if (!dragStart) return;
     const point = localPoint(event);
     if (!point) return;
@@ -76,7 +78,10 @@ export function BboxPicker({
     });
   }
 
-  function onPointerUp() {
+  function onPointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     setDragStart(null);
   }
 
@@ -109,20 +114,21 @@ export function BboxPicker({
     <div className="mt-3 space-y-2">
       <p className="text-xs text-zinc-600">
         Draw a rectangle around <span className="font-medium">you only</span> on the first frame.
+        Works with a finger on mobile.
       </p>
       <div
-        className="relative inline-block max-w-full cursor-crosshair select-none overflow-hidden rounded-lg border border-zinc-200"
-        onMouseDown={onPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
-        onMouseLeave={onPointerUp}
+        className="relative inline-block max-w-full cursor-crosshair touch-none select-none overflow-hidden rounded-lg border border-zinc-200"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <img
           ref={imgRef}
           src={src}
           alt="First frame"
           draggable={false}
-          className="block max-h-80 w-full bg-black"
+          className="block max-h-80 w-full bg-black sm:max-h-96"
         />
         {rect ? (
           <div
@@ -145,7 +151,7 @@ export function BboxPicker({
         type="button"
         onClick={onSave}
         disabled={saving}
-        className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+        className="min-h-10 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
         {saving ? "Saving…" : "Save box and process"}
       </button>

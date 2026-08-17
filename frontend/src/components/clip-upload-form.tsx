@@ -24,6 +24,10 @@ export function ClipUploadForm() {
       setError("Choose a clip to upload");
       return;
     }
+    if (file.size > 50 * 1024 * 1024) {
+      setError("File exceeds 50MB limit");
+      return;
+    }
 
     setError(null);
     setSuccess(null);
@@ -99,7 +103,7 @@ export function ClipUploadForm() {
       <button
         type="submit"
         disabled={loading}
-        className="rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+        className="min-h-10 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
       >
         {loading ? "Uploading…" : "Upload clip"}
       </button>

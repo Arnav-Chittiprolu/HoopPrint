@@ -6,14 +6,14 @@ Upload short footage → pose features → cosine similarity vs real NBA stats �
 
 Full phased plan: **[PROJECT_PLAN.md](./PROJECT_PLAN.md)**
 
-## Stack (Phase 0)
+## Stack
 
 | Layer | Tech |
 |-------|------|
 | Frontend | Next.js (App Router) + Tailwind → Vercel |
 | Backend | FastAPI → Render |
 | Auth / DB / Storage | Supabase |
-| LLM (later) | Gemini Flash |
+| LLM | Gemini Flash (optional narration) |
 
 ## Repo layout
 
@@ -44,7 +44,7 @@ PROJECT_PLAN.md
 ```bash
 cd frontend
 cp .env.example .env.local
-# fill NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_API_URL
+# fill NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_API_DIRECT_URL
 npm install
 npm run dev
 ```
@@ -59,8 +59,9 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# fill SUPABASE_URL, SUPABASE_JWT_SECRET, SUPABASE_SERVICE_ROLE_KEY
-uvicorn app.main:app --reload --port 8000
+# fill SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET, SUPABASE_SERVICE_ROLE_KEY
+# optional: GEMINI_API_KEY
+MPLCONFIGDIR=/tmp/mpl MEDIAPIPE_DISABLE_GPU=1 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 - Public health: `GET http://localhost:8000/health`
@@ -84,9 +85,81 @@ Supabase’s **built-in email sender** has a very low rate limit on the free tie
 
 **Immediate workaround:** Supabase Dashboard → **Authentication** → **Users** → **Add user** (email + password, auto-confirm). Then sign in at `/login`.
 
+## Local run (current)
+
+1. Start backend (no `--reload` — MediaPipe can kill the reloader):
+
+```bash
+cd backend
+MPLCONFIGDIR=/tmp/mpl MEDIAPIPE_DISABLE_GPU=1 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+2. Start frontend: `cd frontend && npm run dev`
+3. Open [http://localhost:3000](http://localhost:3000) → sign in → dashboard.
+
+Clips: mp4/mov, max **25s** and **50MB**. Gameplay: draw a box, then process. Idempotent Retry will not start a second job if that clip is already running. Process is rate-limited to **6 / 15 min** per user.
+
+## Deploy (free tier)
+
+Public URLs need your Vercel + Render accounts. Config is in-repo; env values stay in each dashboard (never commit `.env`).
+
+### Backend → Render
+
+1. New **Web Service**, connect this GitHub repo.
+2. Use Docker: Dockerfile `backend/Dockerfile`, context `backend/` (or Blueprint [`render.yaml`](./render.yaml)).
+3. Health check: `/health`.
+4. Set env vars (same names as [`backend/.env.example`](./backend/.env.example)):
+   - `ENVIRONMENT=production`
+   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`
+   - `CORS_ORIGINS=https://YOUR_VERCEL_APP.vercel.app` (comma-separate preview URLs if needed)
+   - `GEMINI_API_KEY` and `GEMINI_MODEL=gemini-2.5-flash` (optional; comps still work without narration)
+5. After first deploy, copy the `onrender.com` URL.
+
+Free Render will **spin down** after idle; the first request can take ~30–60s. Pose on a 512MB instance can still OOM on huge files — stay under 50MB.
+
+### Frontend → Vercel
+
+1. Import the repo, **Root Directory** `frontend`.
+2. Env:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_API_DIRECT_URL=https://YOUR_RENDER_SERVICE.onrender.com`
+3. Redeploy after the Render URL is known.
+4. Add the Vercel origin to Render `CORS_ORIGINS`.
+
+### Production Supabase
+
+- Same project as local is fine for MVP.
+- Auth → URL configuration: add `https://YOUR_VERCEL_APP.vercel.app` to Site URL / Redirect URLs.
+- Storage bucket `clips` stays **50MB** on the free plan (global file-size cap).
+- Run all SQL in `supabase/migrations/` if this is a new project.
+- Seed NBA rows once: `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
+
+## Free-tier limits
+
+| Service | What you will hit |
+|---------|-------------------|
+| Render free | Cold starts, 512MB RAM, sleeps when idle |
+| Supabase free | Pauses after inactivity; **50MB** upload cap; Auth email quota |
+| Gemini free | Daily token quota; app fails closed (why/recs JSON still saved) |
+| Vercel Hobby | Fine for this Next.js app |
+
+## Scale checklist
+
+1. **Render paid** — no sleep, more RAM/CPU for MediaPipe.
+2. **Supabase Pro** — no pause; raise storage if clip volume grows.
+3. **LLM** — paid Gemini, or `LLM_PROVIDER=anthropic` / `openai` with the same prompt.
+4. Later: job queue if process blocks HTTP; CDN for overlay video.
+
 ## What’s next
 
-Phase 8 — Dashboard polish (charts, history, mobile bbox).
+Pipeline + dashboard are in place. Deploy when you are ready (section above).
+
+### Phase 9 — Hardening + deploy
+
+### Phase 8 — Dashboard UI
+
+Results-first dashboard: style match card with why + slot gaps, personalized recs, Gemini writeup (hidden if empty), pose mechanics bars, feature history, overlay + per-clip features, touch bbox, profile required before comps.
 
 ### Phase 7 — Gameplay bbox + tracking
 

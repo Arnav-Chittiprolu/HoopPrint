@@ -3,14 +3,17 @@
 import { useEffect, useState } from "react";
 import {
   getClipOverlayUrl,
+  listClipFeatures,
   listClips,
   processClip,
   updateClipType,
   type Clip,
+  type ClipFeature,
   type ClipStatus,
   type ClipType,
 } from "@/lib/api";
 import { BboxPicker } from "@/components/bbox-picker";
+import { FeatureBar } from "@/components/feature-bars";
 
 const STATUS_LABELS: Record<ClipStatus, string> = {
   uploaded: "Uploaded",
@@ -37,6 +40,51 @@ function formatDate(iso: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function trackingHint(message: string | null): string | null {
+  if (!message) return null;
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("box") ||
+    lower.includes("track") ||
+    lower.includes("person detected") ||
+    lower.includes("no person")
+  ) {
+    return "Redraw a tighter box around yourself on the first frame, then Retry.";
+  }
+  return null;
+}
+
+function ClipFeatureBars({ clipId }: { clipId: string }) {
+  const [rows, setRows] = useState<ClipFeature[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const next = await listClipFeatures(clipId);
+        if (!cancelled) setRows(next);
+      } catch {
+        if (!cancelled) setRows([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clipId]);
+
+  if (!rows?.length) return null;
+  return (
+    <div className="mt-3 space-y-2 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+        This clip
+      </p>
+      {rows.map((row) => (
+        <FeatureBar key={row.id} name={row.feature_name} value={row.value} />
+      ))}
+    </div>
+  );
 }
 
 function canRetry(clip: Clip) {
@@ -225,7 +273,12 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
                 </p>
                 <p className="text-xs text-zinc-500">{formatDate(clip.created_at)}</p>
                 {clip.status === "failed" && clip.error_message ? (
-                  <p className="mt-1 text-xs text-red-600">{clip.error_message}</p>
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-xs text-red-600">{clip.error_message}</p>
+                    {trackingHint(clip.error_message) ? (
+                      <p className="text-xs text-amber-700">{trackingHint(clip.error_message)}</p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               <div className="flex items-center gap-2">
@@ -266,7 +319,12 @@ export function ClipList({ clips: initialClips }: { clips: Clip[] }) {
                 }}
               />
             ) : null}
-            {clip.status === "done" ? <PoseOverlayPlayer clipId={clip.id} /> : null}
+            {clip.status === "done" ? (
+              <>
+                <PoseOverlayPlayer clipId={clip.id} />
+                <ClipFeatureBars clipId={clip.id} />
+              </>
+            ) : null}
           </li>
         ))}
       </ul>
