@@ -11,20 +11,22 @@ import {
 import { STYLE_LABELS, formatHeightIn } from "@/lib/features";
 import { SlotCompareBar } from "@/components/feature-bars";
 
-function ScoreBar({ score }: { score: number }) {
-  const pct = Math.max(0, Math.min(100, score * 100));
+function Proximity({ match }: { match: CompMatch }) {
+  const band = match.resemblance_band ?? match.why?.score_terms?.resemblance_band ?? "—";
+  const confidence = match.match_confidence;
   return (
-    <div className="flex items-center gap-2">
-      <div className="h-2 w-24 overflow-hidden rounded-full bg-zinc-100">
-        <div className="h-full rounded-full bg-orange-600" style={{ width: `${pct}%` }} />
-      </div>
-      <span className="tabular-nums text-sm font-medium text-zinc-900">{pct.toFixed(1)}%</span>
+    <div className="text-right">
+      <p className="text-sm font-medium text-zinc-900">Role-profile proximity: {band}</p>
+      {confidence != null ? (
+        <p className="mt-0.5 text-xs text-zinc-500">Match confidence: {confidence}/100</p>
+      ) : null}
     </div>
   );
 }
 
 function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }) {
   const why = match.why;
+  const groups = why?.filter?.position_groups;
   return (
     <article
       className={`rounded-lg border p-4 ${
@@ -38,22 +40,25 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
             {match.position ?? "NBA"}
             {match.height_in != null ? ` · ${formatHeightIn(match.height_in)}` : ""}
             {match.season ? ` · ${match.season}` : ""}
-            {featured ? " · overall style" : ""}
+            {featured ? " · role resemblance" : ""}
           </p>
         </div>
-        <ScoreBar score={match.score} />
+        <Proximity match={match} />
       </div>
 
       {featured && why ? (
         <div className="mt-4 space-y-3">
           <div>
-            <h3 className="text-sm font-medium text-zinc-800">Why this match</h3>
+            <h3 className="text-sm font-medium text-zinc-800">Why this resemblance</h3>
             <p className="mt-1 text-xs text-zinc-500">
-              {why.note ?? "Style similarity — not identical motion, not joint-angle matching."}
+              {why.note ??
+                "Public-stat role resemblance — not shared mechanics, skill, or performance."}
             </p>
             {why.filter ? (
               <p className="mt-2 text-sm text-zinc-700">
-                Same position ({why.filter.position}) and height within ±{why.filter.band_in}"
+                Comparison pool
+                {groups?.length ? ` (${groups.join(", ")})` : why.filter.position ? ` (${why.filter.position})` : ""}
+                {why.filter.band_in != null ? ` within ±${why.filter.band_in}"` : ""}
                 {why.filter.user_height_in != null && why.filter.nba_height_in != null
                   ? ` (you ${formatHeightIn(why.filter.user_height_in)}, them ${formatHeightIn(why.filter.nba_height_in)})`
                   : ""}
@@ -62,8 +67,8 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
             ) : null}
             {why.score_terms ? (
               <p className="mt-1 font-mono text-[11px] text-zinc-500">
-                cosine {why.score_terms.cosine ?? "—"} · size {why.score_terms.size_similarity ?? "—"} ·
-                skill {why.score_terms.primary_skill_bonus ?? "—"}
+                distance {why.score_terms.distance ?? "—"} · height tie-break{" "}
+                {why.score_terms.height_tiebreak ?? "—"}
               </p>
             ) : null}
           </div>
@@ -82,7 +87,7 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
           ) : null}
           {why.omitted_slots?.length ? (
             <p className="text-xs text-zinc-500">
-              Omitted (no clip evidence): {why.omitted_slots.map((s) => STYLE_LABELS[s] ?? s).join(", ")}
+              Masked (no shared evidence): {why.omitted_slots.map((s) => STYLE_LABELS[s] ?? s).join(", ")}
             </p>
           ) : null}
         </div>
@@ -91,11 +96,11 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
   );
 }
 
-function RecsBlock({ recs }: { recs: Recommendation[] }) {
+function RecsBlock({ title, recs }: { title: string; recs: Recommendation[] }) {
   if (!recs.length) return null;
   return (
     <div>
-      <h3 className="text-sm font-medium text-zinc-800">Personalized next steps</h3>
+      <h3 className="text-sm font-medium text-zinc-800">{title}</h3>
       <ol className="mt-2 list-decimal space-y-3 pl-5 text-sm text-zinc-800">
         {recs.map((rec, index) => (
           <li key={`${rec.target}-${index}`}>
@@ -128,22 +133,6 @@ function SummaryBlock({ summary }: { summary: string | null }) {
   );
 }
 
-function CategoryList({ title, matches }: { title: string; matches: CompMatch[] }) {
-  if (!matches.length) return null;
-  return (
-    <div>
-      <h3 className="text-sm font-medium text-zinc-800">{title}</h3>
-      <ul className="mt-2 space-y-2">
-        {matches.map((match) => (
-          <li key={`${title}-${match.player_id ?? match.name}`}>
-            <MatchCard match={match} />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 export function CompPanel({ profileReady }: { profileReady: boolean }) {
   const [comp, setComp] = useState<CompResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +150,7 @@ export function CompPanel({ profileReady }: { profileReady: boolean }) {
         }
       } catch (err) {
         if (!cancelled) {
-          const message = err instanceof Error ? err.message : "Could not load comp";
+          const message = err instanceof Error ? err.message : "Could not load comparison";
           if (!/no comp/i.test(message)) {
             setError(message);
           }
@@ -182,19 +171,23 @@ export function CompPanel({ profileReady }: { profileReady: boolean }) {
         const result = await runMyComp();
         setComp(result);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Comp failed");
+        setError(err instanceof Error ? err.message : "Comparison failed");
       }
     });
   }
 
   const top = comp?.overall[0];
+  const archetype = comp?.archetype_result;
+  const mechanicsRecs = comp?.mechanics_recs ?? [];
+  const roleRecs = comp?.role_recs ?? [];
+  const fallbackRecs = !mechanicsRecs.length && !roleRecs.length ? (comp?.recommendations ?? []) : [];
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-5">
-      <h2 className="text-lg font-medium text-zinc-900">NBA style comps</h2>
+      <h2 className="text-lg font-medium text-zinc-900">NBA role resemblances</h2>
       <p className="mt-1 text-sm text-zinc-600">
-        Cosine in style space (size, shot mix, creation, drive, passing) against the seeded roster,
-        filtered by your position and height. Not identical motion.
+        Similar public role-stat profiles within your comparison pool. Not shared mechanics, skill,
+        or performance.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -204,13 +197,13 @@ export function CompPanel({ profileReady }: { profileReady: boolean }) {
           disabled={pending || !profileReady}
           className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
-          {pending ? "Matching…" : comp ? "Re-run style comp" : "Run style comp"}
+          {pending ? "Comparing…" : comp ? "Re-run role comparison" : "Run role comparison"}
         </button>
         {!profileReady ? (
           <p className="text-xs text-amber-700">Save height and position in Your profile first.</p>
         ) : (
           <p className="text-xs text-zinc-500">
-            Why + recs are computed from your numbers. Gemini only narrates them if a key is set.
+            Named NBA examples need Established evidence on at least two role dimensions.
           </p>
         )}
       </div>
@@ -224,34 +217,63 @@ export function CompPanel({ profileReady }: { profileReady: boolean }) {
 
       {comp ? (
         <div className="mt-5 space-y-5 border-t border-zinc-100 pt-5">
-          <p className="text-xs uppercase tracking-wide text-zinc-500">
-            Style card · {comp.season} · pool {comp.pool_size}
-            {comp.height_z_nba != null ? ` · height_z_nba ${comp.height_z_nba.toFixed(2)}` : ""}
-          </p>
-          {top ? <MatchCard match={top} featured /> : null}
-          {comp.overall.slice(1).length ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-800">Also close</h3>
-              {comp.overall.slice(1).map((match) => (
-                <MatchCard key={match.player_id ?? match.name} match={match} />
-              ))}
-            </div>
-          ) : null}
-          {comp.by_category.shot ? (
-            <CategoryList title="Jumper style" matches={comp.by_category.shot} />
-          ) : null}
-          {comp.by_category.pass ? (
-            <CategoryList title="Passing style" matches={comp.by_category.pass} />
-          ) : null}
-          {comp.by_category.drive ? (
-            <CategoryList title="Drive style" matches={comp.by_category.drive} />
-          ) : null}
-          <RecsBlock recs={comp.recommendations ?? []} />
+          <div>
+            <h3 className="text-sm font-medium text-zinc-800">Your playing-style profile</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              Built from quality-checked events. Describes role tendencies, not skill level or
+              outcomes.
+            </p>
+            <p className="mt-2 text-xs text-zinc-600">
+              Evidence strength: {comp.evidence_tier ?? "—"}
+              {comp.active_dimensions?.length
+                ? ` · active: ${comp.active_dimensions.join(", ")}`
+                : ""}
+              {comp.excluded_dimensions?.length
+                ? ` · excluded: ${comp.excluded_dimensions.join(", ")}`
+                : ""}
+            </p>
+            {archetype?.shown && archetype.label ? (
+              <p className="mt-2 text-sm text-zinc-800">
+                Archetype: <span className="font-medium">{archetype.label}</span>
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-zinc-600">Keep building your profile.</p>
+            )}
+            {comp.pool_sentence ? (
+              <p className="mt-2 text-sm text-zinc-700">{comp.pool_sentence}</p>
+            ) : (
+              <p className="mt-2 text-xs uppercase tracking-wide text-zinc-500">
+                {comp.season} · pool {comp.pool_size}
+              </p>
+            )}
+          </div>
+          {comp.named_matches_suppressed || !top ? (
+            <p className="text-sm text-zinc-600">
+              Named NBA examples are withheld until evidence is Established and stable. The
+              archetype above is the current role-level summary.
+            </p>
+          ) : (
+            <>
+              <MatchCard match={top} featured />
+              {comp.overall.slice(1).length ? (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-zinc-800">Also close</h3>
+                  {comp.overall.slice(1).map((match) => (
+                    <MatchCard key={match.player_id ?? match.name} match={match} />
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+          <RecsBlock title="Mechanics next steps" recs={mechanicsRecs} />
+          <RecsBlock title="Role-profile next steps" recs={roleRecs} />
+          <RecsBlock title="Personalized next steps" recs={fallbackRecs} />
           <SummaryBlock summary={comp.summary} />
         </div>
       ) : !loading && profileReady ? (
         <p className="mt-4 text-sm text-zinc-600">
-          Process at least one clip, then run a comp to see a style match, why, and next steps.
+          Process quality-checked clips, then run a comparison to see an archetype or named role
+          resemblance.
         </p>
       ) : null}
     </div>

@@ -11,8 +11,12 @@ from app.services.aggregate import average_features_by_name
 from app.services.features.extract import extract_clip_features
 from app.services.pose_job import extract_pose_isolated
 from app.services.pose_overlay import overlay_storage_path, prepare_working_video, render_pose_overlay_video
+from app.services.role_profile.aggregate import aggregate_role_profile
+from app.services.role_profile.db import clip_event_to_row, user_role_profile_to_row
+from app.services.role_profile.extract_events import extract_clip_events
 from app.services.supabase_client import SupabaseService
 from app.services.track import NormBox
+from app.services.video_meta import probe_video_fps
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,52 @@ async def process_clip(clip_id: str, user_id: str | None = None) -> dict:
             ]
         )
 
+        video_fps = await asyncio.to_thread(probe_video_fps, work_path)
+        event_records: list = []
+        try:
+            await supabase.delete_clip_events(clip_id)
+            event_records = extract_clip_events(
+                frames,
+                clip_id=clip_id,
+                user_id=clip["user_id"],
+                clip_type=clip["clip_type"],
+                dominant_hand=dominant_hand,
+                video_fps=video_fps,
+                clip_created_at=clip.get("created_at"),
+            )
+            if event_records:
+                await supabase.insert_clip_events(
+                    [clip_event_to_row(event) for event in event_records]
+                )
+            try:
+                all_events = await supabase.list_clip_events(
+                    user_id=str(clip["user_id"]),
+                    gate_passed=True,
+                )
+                profile_record = aggregate_role_profile(
+                    all_events,
+                    user_id=clip["user_id"],
+                )
+                await supabase.upsert_user_role_profile(
+                    user_role_profile_to_row(profile_record)
+                )
+            except Exception:
+                logger.warning(
+                    "user_role_profile_upsert_failed",
+                    extra={
+                        "event": "user_role_profile_upsert_failed",
+                        "clip_id": clip_id,
+                        "user_id": clip.get("user_id"),
+                    },
+                    exc_info=True,
+                )
+        except Exception:
+            logger.warning(
+                "clip_events_persist_failed",
+                extra={"event": "clip_events_persist_failed", "clip_id": clip_id},
+                exc_info=True,
+            )
+
         keypoint_rows = [
             {
                 "frame_index": frame.frame_index,
@@ -187,6 +237,7 @@ async def process_clip(clip_id: str, user_id: str | None = None) -> dict:
             "clip": updated,
             "frame_count": len(frames),
             "feature_count": len(feature_rows),
+            "event_count": len(event_records),
         }
     except Exception as exc:
         message = str(exc) if str(exc) else exc.__class__.__name__

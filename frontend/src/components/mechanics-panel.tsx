@@ -61,8 +61,8 @@ export function MechanicsPanel() {
     <div className="rounded-lg border border-zinc-200 bg-white p-5">
       <h2 className="text-lg font-medium text-zinc-900">Mechanics</h2>
       <p className="mt-1 text-sm text-zinc-600">
-        Pose features from your clips — joint angles and body-length measures, not NBA shooting
-        percentages.
+        Pose measurements from your clips — release posture, elbow configuration, relative
+        release height, wrist-rise proxy, and body-relative burst. Not used for NBA matching.
       </p>
 
       {loading ? <p className="mt-4 text-sm text-zinc-500">Loading mechanics…</p> : null}

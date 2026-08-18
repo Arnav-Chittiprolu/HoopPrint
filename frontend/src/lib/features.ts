@@ -40,6 +40,9 @@ export const STYLE_LABELS: Record<string, string> = {
   creation: "Creation",
   drive_burst: "Drive burst",
   passing: "Passing",
+  catch_readiness: "Catch readiness",
+  rim_pressure_tendency: "Rim-pressure tendency",
+  playmaking_orientation: "Playmaking orientation",
 };
 
 export function featureLabel(name: string): string {

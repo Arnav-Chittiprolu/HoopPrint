@@ -25,8 +25,9 @@ export default function HomePage() {
           Basketball skill analysis from your own footage.
         </h1>
         <p className="mt-4 max-w-lg text-base leading-7 text-zinc-600">
-          Upload a clip, extract pose mechanics, match an NBA style comp from real
-          stats, and get a grounded why + next steps.
+          Upload short clips over time. HoopPrint analyzes visible movement and, when enough
+          evidence is available, compares your playing-style profile with NBA role
+          archetypes—not exact shooting form or future performance.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Link

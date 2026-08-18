@@ -39,15 +39,21 @@ async def _main(season: str) -> int:
         return 1
 
     by_pos: dict[str, int] = {}
+    with_role = 0
     for row in saved:
         pos = row.get("position") or "?"
         by_pos[pos] = by_pos.get(pos, 0) + 1
+        rv = row.get("role_vector") or {}
+        if isinstance(rv, dict) and rv:
+            with_role += 1
 
     print(
         json.dumps(
             {
                 "season": season,
                 "count": len(saved),
+                "with_role_vector": with_role,
+                "transform_version": saved[0].get("transform_version") if saved else None,
                 "by_position": by_pos,
             },
             indent=2,

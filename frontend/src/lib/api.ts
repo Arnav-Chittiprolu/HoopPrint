@@ -343,26 +343,36 @@ export interface CompMatch {
   height_in: number | null;
   score: number;
   style_vector: Record<string, number>;
+  role_vector?: Record<string, number>;
   kind: string;
+  resemblance_band?: string | null;
+  match_confidence?: number | null;
   why?: {
     label?: string;
     filter?: {
       position?: string | null;
+      position_groups?: string[];
       user_height_in?: number;
       nba_height_in?: number | null;
       height_z_nba?: number | null;
       band_in?: number;
       height_delta_in?: number | null;
+      stage?: number;
     };
     score_terms?: {
       cosine?: number | null;
-      size_similarity?: number | null;
-      primary_skill_bonus?: number | null;
+      distance?: number | null;
+      height_tiebreak?: number | null;
+      resemblance_band?: string | null;
       total?: number | null;
+      user_scale?: string;
+      nba_scale?: string;
     };
     slots?: Array<{ dim: string; user: number; nba: number; gap: number }>;
     omitted_slots?: string[];
     note?: string;
+    pool_sentence?: string;
+    evidence_tier?: string;
   } | null;
 }
 
@@ -385,13 +395,29 @@ export interface CompResult {
   created_at: string | null;
   season: string | null;
   label: string;
+  comparison_mode?: string | null;
   user_style: Record<string, number>;
+  user_role_vector?: Record<string, number>;
   evidence: Record<string, boolean>;
+  evidence_tier?: string | null;
   mechanics: Record<string, number>;
   overall: CompMatch[];
   by_category: Partial<Record<"shot" | "pass" | "drive", CompMatch[]>>;
   pool_size: number;
+  pool_sentence?: string | null;
   recommendations?: Recommendation[];
+  mechanics_recs?: Recommendation[];
+  role_recs?: Recommendation[];
+  archetype_result?: {
+    key?: string;
+    label?: string;
+    detail?: string;
+    shown?: boolean;
+  } | null;
+  named_matches_suppressed?: boolean | null;
+  suppression_reason?: string | null;
+  active_dimensions?: string[];
+  excluded_dimensions?: string[];
   height_z_us?: number | null;
   height_z_nba?: number | null;
   summary: string | null;

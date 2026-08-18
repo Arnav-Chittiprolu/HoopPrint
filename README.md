@@ -1,10 +1,52 @@
 # HoopPrint
 
-Basketball skill analyzer + NBA player comp.
+HoopPrint is a basketball video-analysis application that turns repeated short clips into two separate outputs:
 
-Upload short footage → pose features → cosine similarity vs real NBA stats → Gemini grounded summary.
+1. **Mechanics report** — pose-derived movement measurements from your own clips, such as release posture, relative hand height, body-relative early movement burst, and motion consistency.
+
+2. **Playing-style profile** — a role-level summary built only from quality-checked shot, drive-like, and pass-like events across multiple clips. When evidence is sufficient, HoopPrint compares this profile with NBA role profiles derived from public tracking and shot-profile statistics.
+
+HoopPrint does not claim that a user's joint angles match an NBA player's, that a clip predicts shooting percentage or NBA performance, or that a named NBA comparison is an exact player match.
 
 Full phased plan: **[PROJECT_PLAN.md](./PROJECT_PLAN.md)**
+
+## Limits
+
+HoopPrint uses MediaPipe Pose landmarks from a single player. It does not directly track the ball, basket, defenders, teammates, pass target, contest level, shot result, dribble count, or full-game possession context.
+
+Accordingly, HoopPrint:
+
+- Does not measure true ball-release angle, ball arc, entry angle, shot distance, or shot make probability from pose alone.
+- Does not infer assists, potential assists, pass completion, turnover risk, defender pressure, or basketball IQ from a one-player clip.
+- Does not use pose mechanics such as elbow angle or release posture to compare a user with NBA shooting percentages or NBA player mechanics.
+- Treats uploaded clip events as sampled evidence, not as full-game rates such as drives per game or passes per possession.
+
+## How NBA role comparisons work
+
+NBA comparisons are role resemblances, not biomechanical matches.
+
+1. HoopPrint builds a user profile only from validated clip events.
+2. It filters NBA candidates by broad position group and reported-height band.
+3. It compares only role dimensions supported by evidence in the user's clips.
+4. NBA inputs are public tracking and shot-profile statistics, normalized within a season and role cohort.
+5. Mechanics measurements are never used in the NBA similarity score.
+6. Named NBA examples appear only after sufficient repeated evidence and stability checks; otherwise HoopPrint shows an archetype only.
+
+## Data provenance
+
+NBA role-profile fields are sourced from public NBA statistics through cached `nba_api` data pulls. Each seed record stores its season, endpoint, source field, denominator, transformation version, and retrieval timestamp.
+
+Because NBA.com data endpoints and fields can change, HoopPrint stores source snapshots and does not fabricate unavailable values.
+
+Role-profile seed mapping (`python -m app.scripts.seed_nba_players`):
+
+| Role dimension | NBA rate | Endpoints / fields |
+|---|---|---|
+| Catch readiness | Catch-and-shoot FGA / (C&S FGA + pull-up FGA) | `LeagueDashPtStats` CatchShoot + PullUpShot |
+| Rim-pressure tendency | Drives / touches; paint-points share only if touches unavailable | `LeagueDashPtStats` Drives + Possessions; Scoring `PCT_PTS_PAINT` as documented proxy |
+| Playmaking orientation | Potential assists / touches (else / passes) | `LeagueDashPtStats` Passing + Possessions |
+
+Cohort percentiles are empirical ranks within position group after a minutes/GP filter. Legacy `style_vector` is no longer written.
 
 ## Stack
 
@@ -31,8 +73,10 @@ PROJECT_PLAN.md
 1. Create a free project at [supabase.com](https://supabase.com).
 2. Enable Email auth (Authentication → Providers → Email).
    - **Local dev:** turn **OFF** “Confirm email” so signup logs you in immediately and avoids Supabase’s tiny built-in email quota (~2 emails/hour on free tier).
-3. Run the migration SQL in the SQL Editor:
+3. Run migrations in the SQL Editor (in order):
    - [`supabase/migrations/20260813160000_phase0_schema.sql`](./supabase/migrations/20260813160000_phase0_schema.sql)
+   - … subsequent phase migrations …
+   - [`supabase/migrations/20260817220000_phase10_role_profile_data_contracts.sql`](./supabase/migrations/20260817220000_phase10_role_profile_data_contracts.sql) *(Phase 10.1 — role-profile tables)*
 4. Copy keys from **Project Settings → API**:
    - Project URL
    - `anon` public key
@@ -151,15 +195,15 @@ Free Render will **spin down** after idle; the first request can take ~30–60s.
 3. **LLM** — paid Gemini, or `LLM_PROVIDER=anthropic` / `openai` with the same prompt.
 4. Later: job queue if process blocks HTTP; CDN for overlay video.
 
-## What’s next
+## What's next
 
-Pipeline + dashboard are in place. Deploy when you are ready (section above).
+**Phase 10** (current priority): role-profile pivot — data contracts, event gates, provenance-backed NBA seed, masked percentile scoring, dashboard/README copy, disable legacy engine. See PROJECT_PLAN.md §Phase 10.
 
 ### Phase 9 — Hardening + deploy
 
 ### Phase 8 — Dashboard UI
 
-Results-first dashboard: style match card with why + slot gaps, personalized recs, Gemini writeup (hidden if empty), pose mechanics bars, feature history, overlay + per-clip features, touch bbox, profile required before comps.
+Results-first dashboard: mechanics panel, playing-style profile (Phase 10), NBA role resemblances when evidence is established, split recs, Gemini narration (optional), overlay, history, touch bbox.
 
 ### Phase 7 — Gameplay bbox + tracking
 
@@ -171,32 +215,19 @@ Upload as **gameplay** → draw a box around yourself on the first frame → CSR
 
 ### Phase 6 — Why this match + personalized recs
 
-After `POST /me/comp`, each match includes a computed `why` (filter + score terms + slot gaps). Recs come from your pose vs this match and the NBA position cohort. Gemini narrates those JSON blobs only.
+After `POST /me/comp`, each match includes a computed `why` (filter + dimension gaps + evidence tier). Recs split into **mechanics_recs** and **role_recs** (Phase 10). Gemini narrates stored JSON only — it does not select candidates or make performance claims.
 
 - Set `GEMINI_API_KEY` in `backend/.env` (optional — why/recs still save if unset)
-- Dashboard **NBA style comps** shows why, next steps, and writeup
+- Dashboard shows why, next steps, and writeup when available
 
-### Phase 5 — NBA style-space comps
+### Phase 5 — NBA comps *(legacy — replaced by Phase 10 role profile)*
 
-Full-roster seed from `nba_api` → `nba_players.style_vector` → cosine comps filtered by height/position.
+Full-roster seed from `nba_api` now writes `role_vector` + provenance. Cosine `style_vector` matching is disabled on `POST /me/comp`.
 
-- Migration: `supabase/migrations/20260814180000_phase5_nba_style.sql`
-- Seed (once per season): `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
-- API: `POST /me/comp`, `GET /me/comp`
-- Dashboard: **NBA style comps** panel
+- Seed (once per season, after role-profile columns exist): `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
+- API: `POST /me/comp`, `GET /me/comp` — `comparison_mode: "role_profile_v1"`
 
-**Style slot ← field mapping**
-
-| Style slot | User | NBA (`nba_api` cache) |
-|------------|------|------------------------|
-| `size` | `height_z_nba` vs NBA/position mean (not US male `height_z`) | listed height on same NBA z scale |
-| `perimeter_vs_rim` | `release_angle`, `shot_arc` | Scoring: `PCT_FGA_3PT`, `1 - PCT_PTS_PAINT` |
-| `creation` | `decision_speed` | `PCT_UAST_FGM` + pull-up FGA share vs catch-and-shoot |
-| `drive_burst` | `first_step_burst`, COD | tracking Drives + `AVG_SPEED_OFF` (league min-max) |
-| `passing` | arm extension / consistency | `AST_PCT` + potential assists / passes |
-
-Pose mechanics are returned separately and are **not** treated as FG%/3P%/FT%.
-
+Pose mechanics are returned separately and must **not** feed role matching.
 ### Phase 4 — Aggregation + profile questionnaire
 
 - After each successful clip, features average into `user_profiles_agg`

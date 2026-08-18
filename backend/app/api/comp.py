@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.auth import CurrentUser, get_current_user
 from app.config import Settings, get_settings
 from app.models.comp import CompResultResponse
-from app.services.comp import CompError, comp_from_stored_row, run_style_comp
+from app.services.comp import CompError, comp_from_stored_row, run_role_comp
 from app.services.supabase_client import SupabaseService
 
 router = APIRouter(prefix="/me", tags=["comp"])
@@ -27,7 +27,7 @@ async def create_comp(
     supabase: SupabaseService = Depends(get_supabase),
 ) -> CompResultResponse:
     try:
-        result = await run_style_comp(supabase, user.id)
+        result = await run_role_comp(supabase, user.id)
     except CompError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:

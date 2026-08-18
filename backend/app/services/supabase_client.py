@@ -370,10 +370,98 @@ class SupabaseService:
                 )
             return response.json()
 
+    async def insert_clip_events(self, rows: list[dict]) -> list[dict]:
+        if not rows:
+            return []
+        url = f"{self.base_url}/rest/v1/clip_events"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.post(
+                url,
+                headers={**self.headers, "Prefer": "return=representation"},
+                json=rows,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Clip event insert failed: {response.status_code} {response.text}"
+                )
+            data = response.json()
+            return data if isinstance(data, list) else [data]
+
+    async def delete_clip_events(self, clip_id: str) -> None:
+        url = f"{self.base_url}/rest/v1/clip_events?clip_id=eq.{clip_id}"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.delete(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Clip event delete failed: {response.status_code} {response.text}"
+                )
+
+    async def list_clip_events(
+        self,
+        clip_id: str | None = None,
+        *,
+        user_id: str | None = None,
+        gate_passed: bool | None = None,
+    ) -> list[dict]:
+        url = f"{self.base_url}/rest/v1/clip_events?select=*&order=created_at.asc"
+        if clip_id:
+            url += f"&clip_id=eq.{clip_id}"
+        if user_id:
+            url += f"&user_id=eq.{user_id}"
+        if gate_passed is not None:
+            url += f"&gate_passed=eq.{str(gate_passed).lower()}"
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Clip event list failed: {response.status_code} {response.text}"
+                )
+            return response.json()
+
+    async def upsert_user_role_profile(self, row: dict) -> dict:
+        url = (
+            f"{self.base_url}/rest/v1/user_role_profile"
+            f"?on_conflict=user_id"
+        )
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.post(
+                url,
+                headers={
+                    **self.headers,
+                    "Prefer": "return=representation,resolution=merge-duplicates",
+                },
+                json=row,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"User role profile upsert failed: {response.status_code} {response.text}"
+                )
+            data = response.json()
+            return data[0] if isinstance(data, list) else data
+
+    async def get_user_role_profile(self, user_id: str) -> dict | None:
+        url = (
+            f"{self.base_url}/rest/v1/user_role_profile"
+            f"?user_id=eq.{user_id}&limit=1"
+        )
+        async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
+            response = await client.get(url, headers=self.headers)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"User role profile fetch failed: {response.status_code} {response.text}"
+                )
+            rows = response.json()
+            return rows[0] if rows else None
+
     async def list_nba_players(self, season: str | None = None) -> list[dict]:
         url = (
             f"{self.base_url}/rest/v1/nba_players"
-            f"?select=id,player_id,name,season,position,height_in,style_vector,raw_stats,created_at"
+            f"?select=id,player_id,name,season,season_type,position,position_group,height_in,"
+            f"style_vector,role_vector,raw_stats,raw_source,cohort_percentiles,"
+            f"catch_shoot_fga,pull_up_fga,catch_shoot_share,drives,touches,drives_per_touch,"
+            f"rim_attempt_share,passes,potential_assists,passes_per_touch,"
+            f"potential_assists_per_pass,potential_assists_per_touch,assist_pct,"
+            f"minutes,possessions,meets_min_sample,transform_version,seeded_at,created_at"
             f"&order=name.asc"
         )
         if season:
@@ -402,10 +490,33 @@ class SupabaseService:
                     "player_id": row["player_id"],
                     "name": row["name"],
                     "season": season,
+                    "season_type": row.get("season_type") or "Regular Season",
                     "position": row["position"],
+                    "position_group": row.get("position_group") or row["position"],
                     "height_in": row["height_in"],
-                    "style_vector": row.get("style_vector") or {},
+                    "style_vector": {},
+                    "role_vector": row.get("role_vector") or {},
                     "raw_stats": row.get("raw_stats") or {},
+                    "raw_source": row.get("raw_source") or {},
+                    "cohort_percentiles": row.get("cohort_percentiles") or {},
+                    "catch_shoot_fga": row.get("catch_shoot_fga"),
+                    "pull_up_fga": row.get("pull_up_fga"),
+                    "catch_shoot_share": row.get("catch_shoot_share"),
+                    "drives": row.get("drives"),
+                    "touches": row.get("touches"),
+                    "drives_per_touch": row.get("drives_per_touch"),
+                    "rim_attempt_share": row.get("rim_attempt_share"),
+                    "passes": row.get("passes"),
+                    "potential_assists": row.get("potential_assists"),
+                    "passes_per_touch": row.get("passes_per_touch"),
+                    "potential_assists_per_pass": row.get("potential_assists_per_pass"),
+                    "potential_assists_per_touch": row.get("potential_assists_per_touch"),
+                    "assist_pct": row.get("assist_pct"),
+                    "minutes": row.get("minutes"),
+                    "possessions": row.get("possessions"),
+                    "meets_min_sample": bool(row.get("meets_min_sample")),
+                    "transform_version": row.get("transform_version"),
+                    "seeded_at": row.get("seeded_at"),
                 }
                 for row in rows
             ]
@@ -431,13 +542,22 @@ class SupabaseService:
                     saved.append(data)
             return saved
 
-    async def insert_comp_result(self, user_id: str, matches: dict, summary: str | None = None) -> dict:
+    async def insert_comp_result(
+        self,
+        user_id: str,
+        matches: dict,
+        summary: str | None = None,
+        *,
+        audit: dict | None = None,
+    ) -> dict:
         url = f"{self.base_url}/rest/v1/comp_results"
-        payload = {
+        payload: dict = {
             "user_id": user_id,
             "matches": matches,
             "summary": summary,
         }
+        if audit:
+            payload.update({k: v for k, v in audit.items() if v is not None})
         async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
             response = await client.post(
                 url,
@@ -455,7 +575,9 @@ class SupabaseService:
         url = (
             f"{self.base_url}/rest/v1/comp_results"
             f"?user_id=eq.{user_id}"
-            f"&select=id,user_id,matches,summary,created_at"
+            f"&select=id,user_id,matches,summary,created_at,"
+            f"comparison_mode,evidence_tier,profile_version,nba_seed_version,"
+            f"mechanics_recs,role_recs,archetype_result,candidate_results"
             f"&order=created_at.desc&limit=1"
         )
         async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:

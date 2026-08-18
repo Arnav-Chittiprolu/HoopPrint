@@ -1,18 +1,24 @@
-"""Fetch full NBA roster style rows from nba_api (seed/cache only).
+"""Fetch full NBA roster role rows from nba_api (seed/cache only).
 
 League-wide endpoints (not per-player live calls at comp time):
 - PlayerIndex — position + height string fallback
-- LeagueDashPlayerBioStats — height inches, AST_PCT
+- LeagueDashPlayerBioStats — height inches, AST_PCT, MIN, GP
 - LeagueDashPlayerStats (Scoring) — PCT_FGA_3PT, PCT_PTS_PAINT, PCT_UAST_FGM
-- LeagueDashPtStats Drives / SpeedDistance / Passing / PullUpShot / CatchShoot
+- LeagueDashPtStats Drives / SpeedDistance / Passing / PullUpShot / CatchShoot / Possessions
+
+Writes rate-normalized fields, provenance (`raw_source`), cohort percentiles, and
+`role_vector`. Does not write legacy `style_vector` (stored as {}).
 """
 
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from app.services.aggregate import compute_height_z, compute_height_z_nba
+from app.services.role_profile.constants import NBA_TRANSFORM_VERSION, SEASON_TYPE_DEFAULT
+from app.services.role_profile.nba_transform import finalize_nba_role_rows
 from app.services.style import clamp01, map_nba_position, size_from_height_in
 
 DEFAULT_SEASON = "2025-26"
@@ -186,6 +192,21 @@ def fetch_nba_player_rows(
             per_mode_simple="PerGame",
         )
     )
+    pause()
+    possessions_rows: list[dict] = []
+    try:
+        possessions_rows = _df_records(
+            leaguedashptstats.LeagueDashPtStats(
+                season=season,
+                player_or_team="Player",
+                pt_measure_type="Possessions",
+                per_mode_simple="PerGame",
+            )
+        )
+    except Exception:
+        possessions_rows = []
+
+    fetched_at = datetime.now(timezone.utc)
 
     index_by_id = {int(r["PERSON_ID"]): r for r in index_rows if r.get("PERSON_ID") is not None}
     bio_by_id = {int(r["PLAYER_ID"]): r for r in bio_rows if r.get("PLAYER_ID") is not None}
@@ -195,6 +216,7 @@ def fetch_nba_player_rows(
     passing_by_id = {int(r["PLAYER_ID"]): r for r in passing_rows if r.get("PLAYER_ID") is not None}
     pullup_by_id = {int(r["PLAYER_ID"]): r for r in pullup_rows if r.get("PLAYER_ID") is not None}
     catch_by_id = {int(r["PLAYER_ID"]): r for r in catch_rows if r.get("PLAYER_ID") is not None}
+    poss_by_id = {int(r["PLAYER_ID"]): r for r in possessions_rows if r.get("PLAYER_ID") is not None}
 
     drives_norm = _minmax_norm(
         {
@@ -223,6 +245,7 @@ def fetch_nba_player_rows(
         passing = passing_by_id.get(pid, {})
         pullup = pullup_by_id.get(pid, {})
         catch = catch_by_id.get(pid, {})
+        poss = poss_by_id.get(pid, {})
 
         name = (
             bio.get("PLAYER_NAME")
@@ -264,6 +287,8 @@ def fetch_nba_player_rows(
             "potential_ast": _safe_float(passing, "POTENTIAL_AST"),
             "pull_up_fga": _safe_float(pullup, "PULL_UP_FGA"),
             "catch_shoot_fga": _safe_float(catch, "CATCH_SHOOT_FGA"),
+            "touches": _safe_float(poss, "TOUCHES"),
+            "minutes": _safe_float(bio, "MIN", "MINUTES"),
             "sources": [
                 "PlayerIndex",
                 "LeagueDashPlayerBioStats",
@@ -273,6 +298,7 @@ def fetch_nba_player_rows(
                 "LeagueDashPtStats:Passing",
                 "LeagueDashPtStats:PullUpShot",
                 "LeagueDashPtStats:CatchShoot",
+                "LeagueDashPtStats:Possessions",
             ],
         }
 
@@ -281,11 +307,24 @@ def fetch_nba_player_rows(
                 "player_id": pid,
                 "name": name,
                 "season": season,
+                "season_type": SEASON_TYPE_DEFAULT,
                 "position": position,
+                "position_group": position,
                 "height_in": height_in,
                 "raw_stats": raw_stats,
-                "style_vector": build_nba_style_vector(raw_stats),
+                "catch_shoot_fga": raw_stats["catch_shoot_fga"],
+                "pull_up_fga": raw_stats["pull_up_fga"],
+                "drives": raw_stats["drives"],
+                "touches": raw_stats["touches"],
+                "passes": raw_stats["passes_made"],
+                "potential_assists": raw_stats["potential_ast"],
+                "assist_pct": raw_stats["ast_pct"],
+                "minutes": raw_stats["minutes"],
+                "gp": raw_stats["gp"],
+                "transform_version": NBA_TRANSFORM_VERSION,
+                "seeded_at": fetched_at.isoformat(),
+                "style_vector": {},
             }
         )
 
-    return rows
+    return finalize_nba_role_rows(rows, season=season, fetched_at=fetched_at)

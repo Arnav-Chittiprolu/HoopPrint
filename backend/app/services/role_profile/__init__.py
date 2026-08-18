@@ -1,0 +1,21 @@
+"""Phase 10 role-profile package."""
+
+from app.services.role_profile.constants import (
+    BANNED_MECHANICS_KEYS,
+    COMPARISON_MODE_LEGACY,
+    COMPARISON_MODE_ROLE,
+    DISCLOSURE_VERSION,
+    NBA_TRANSFORM_VERSION,
+    ROLE_PROFILE_VERSION,
+    ROLE_VECTOR_KEYS,
+)
+
+__all__ = [
+    "BANNED_MECHANICS_KEYS",
+    "COMPARISON_MODE_LEGACY",
+    "COMPARISON_MODE_ROLE",
+    "DISCLOSURE_VERSION",
+    "NBA_TRANSFORM_VERSION",
+    "ROLE_PROFILE_VERSION",
+    "ROLE_VECTOR_KEYS",
+]

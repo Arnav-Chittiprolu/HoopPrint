@@ -51,7 +51,7 @@ export default async function DashboardPage() {
 
       {!profileReady ? (
         <p className="mt-6 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Save height and position in Your profile before running an NBA style comp.
+          Save height and position in Your profile before running an NBA role comparison.
         </p>
       ) : null}
 
@@ -65,8 +65,8 @@ export default async function DashboardPage() {
           <div className="rounded-lg border border-zinc-200 bg-white p-5">
             <h2 className="text-lg font-medium text-zinc-900">Your profile</h2>
             <p className="mt-1 text-sm text-zinc-600">
-              Height, position, hand, and primary skill calibrate pose and filter the NBA pool.
-              Facts only — not “who you play like.”
+              Height and position filter the NBA comparison pool. They are not role-profile
+              dimensions.
             </p>
             <div className="mt-4">
               <ProfileQuestionnaireForm />
