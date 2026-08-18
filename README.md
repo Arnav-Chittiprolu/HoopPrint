@@ -1,44 +1,91 @@
+# HoopPrint — basketball clips that become a role profile
+
 # HoopPrint
 
-HoopPrint is a basketball video-analysis application that turns repeated short clips into two separate outputs:
+Basketball clip analysis that separates how you move from how you play.
 
-1. **Mechanics report** — pose-derived movement measurements from your own clips, such as release posture, relative hand height, body-relative early movement burst, and motion consistency.
+Upload short shot, pass, and drive clips. HoopPrint quality-checks the action, measures mechanics from pose, and — when enough events pass — matches a playing-style profile to NBA role resemblances. Height is body plausibility, not a style slot. A named comparison is not a claim that you shoot like them.
 
-2. **Playing-style profile** — a role-level summary built only from quality-checked shot, drive-like, and pass-like events across multiple clips. When evidence is sufficient, HoopPrint compares this profile with NBA role profiles derived from public tracking and shot-profile statistics.
+Next.js · FastAPI · Supabase · MediaPipe · Tailwind · Gemini
 
-HoopPrint does not claim that a user's joint angles match an NBA player's, that a clip predicts shooting percentage or NBA performance, or that a named NBA comparison is an exact player match.
+**Status:** prototype · **Platform:** local + Vercel / Render · **Clips:** mp4 / mov, ~25s, 50MB
 
-Full phased plan: **[PROJECT_PLAN.md](./PROJECT_PLAN.md)**
+---
 
-## Limits
+# HoopPrint — footage in, role profile out
 
-HoopPrint uses MediaPipe Pose landmarks from a single player. It does not directly track the ball, basket, defenders, teammates, pass target, contest level, shot result, dribble count, or full-game possession context.
+> [!NOTE]
+> Two reports, never mixed. **Mechanics** come from MediaPipe pose on your clips. **NBA names** come from quality-checked shot / pass / drive events compared to public tracking stats. Elbow angle never ranks you against Cade. A 6'6" profile never names Wembanyama.
 
-Accordingly, HoopPrint:
+## Contents
 
-- Does not measure true ball-release angle, ball arc, entry angle, shot distance, or shot make probability from pose alone.
-- Does not infer assists, potential assists, pass completion, turnover risk, defender pressure, or basketball IQ from a one-player clip.
-- Does not use pose mechanics such as elbow angle or release posture to compare a user with NBA shooting percentages or NBA player mechanics.
-- Treats uploaded clip events as sampled evidence, not as full-game rates such as drives per game or passes per possession.
+- [What it is](#what-it-is)
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Getting started](#getting-started)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Design system](#design-system)
+- [Deploy](#deploy)
+- [Roadmap](#roadmap)
+- [Limits](#limits)
+- [Acknowledgements](#acknowledgements)
 
-## How NBA role comparisons work
+## What it is
 
-NBA comparisons are role resemblances, not biomechanical matches.
+HoopPrint is a web app that turns repeated short clips into two separate outputs:
 
-1. HoopPrint builds a user profile only from validated clip events.
-2. It filters NBA candidates by broad position group and reported-height band.
-3. It compares only role dimensions supported by evidence in the user's clips.
-4. NBA inputs are public tracking and shot-profile statistics, normalized within a season and role cohort.
-5. Mechanics measurements are never used in the NBA similarity score.
-6. Named NBA examples appear only after sufficient repeated evidence and stability checks; otherwise HoopPrint shows an archetype only.
+1. **Mechanics report** — pose-derived measurements from your own footage (release posture, relative hand height, body-relative burst, motion consistency).
+2. **Playing-style profile** — a role-level summary built only from quality-checked catch-and-shoot / pull-up, drive-like, and pass-like events. When evidence is **Established** (~5 valid events), it names NBA role comps.
 
-## Data provenance
+It does **not** claim that your joint angles match an NBA player's, that a clip predicts shooting percentage or NBA performance, or that a named comparison is an exact player match.
 
-NBA role-profile fields are sourced from public NBA statistics through cached `nba_api` data pulls. Each seed record stores its season, endpoint, source field, denominator, transformation version, and retrieval timestamp.
+The product surface is two tabs after login:
 
-Because NBA.com data endpoints and fields can change, HoopPrint stores source snapshots and does not fabricate unavailable values.
+- **Clips** — profile, upload, and clip list.
+- **Analysis** — playing-style profile, physical context, primary comps, style-only references, and a re-run card.
 
-Role-profile seed mapping (`python -m app.scripts.seed_nba_players`):
+## How it works
+
+```
+  you ── upload clip ──►  ┌─────────────────┐
+                          │  FastAPI + pose │  MediaPipe on a single player
+                          │  (MediaPipe)    │  optional gameplay box + track
+                          └────────┬────────┘
+                                   │ keypoints · clip features
+              ┌────────────────────┼────────────────────┐
+              ▼                                         ▼
+        ┌───────────┐                             ┌───────────┐
+        │ mechanics │                             │   gates   │
+        │  report   │                             │ shot/pass │
+        │  (pose)   │                             │  /drive   │
+        └───────────┘                             └─────┬─────┘
+                                                        │ valid events only
+                                                  ┌─────▼─────┐
+                                                  │ role vec  │
+                                                  │ catch ·   │
+                                                  │ rim ·     │
+                                                  │ playmake  │
+                                                  └─────┬─────┘
+                                                        │ 72% role / 16% body
+                                                  ┌─────▼─────┐
+                                                  │ NBA names │
+                                                  │  or style │
+                                                  │   -only   │
+                                                  └───────────┘
+```
+
+1. **You record the action** — tag shot, pass, or drive. Solo drills process immediately. Gameplay asks you to box yourself; only that person is tracked.
+2. **Pose runs on the crop** — MediaPipe writes keypoints. Mechanics come from those landmarks. Role matching never reads them.
+3. **Events have to pass a gate** — form shooting, missing catches, sparse tracks, and clips that start on the action do not count toward NBA comparison.
+4. **The role vector is three numbers** — catch readiness, rim-pressure tendency, playmaking orientation. Missing dimensions are masked, not zero-filled.
+5. **Rank is role-first** — 72% role resemblance, 16% body plausibility, 7% sample confidence, 5% listed position. Height bands: 0–5" primary, 5–7" primary only on high resemblance, 7–9" style-only, **>9" excluded**.
+
+NBA inputs are public tracking and shot-profile statistics (`nba_api`), stored with season, endpoint, source field, and transform version. Cohort percentiles are empirical ranks within position group after a minutes / GP filter.
+
+### Role-profile seed mapping
+
+`python -m app.scripts.seed_nba_players`
 
 | Role dimension | NBA rate | Endpoints / fields |
 |---|---|---|
@@ -46,49 +93,52 @@ Role-profile seed mapping (`python -m app.scripts.seed_nba_players`):
 | Rim-pressure tendency | Drives / touches; paint-points share only if touches unavailable | `LeagueDashPtStats` Drives + Possessions; Scoring `PCT_PTS_PAINT` as documented proxy |
 | Playmaking orientation | Potential assists / touches (else / passes) | `LeagueDashPtStats` Passing + Possessions |
 
-Cohort percentiles are empirical ranks within position group after a minutes/GP filter. Legacy `style_vector` is no longer written.
+## Features
 
-## Stack
+**Clips**
 
-| Layer | Tech |
-|-------|------|
-| Frontend | Next.js (App Router) + Tailwind → Vercel |
-| Backend | FastAPI → Render |
-| Auth / DB / Storage | Supabase |
-| LLM | Gemini Flash (optional narration) |
+- Shot / Pass / Drive segmented upload with a dropzone. mp4 or mov, ~25s, 50MB.
+- Individual drills auto-process. Gameplay: draw a full-body box, then track.
+- Compact clip list with Processed / Processing / Error; expand for overlay, type change, retry, delete.
+- Progress toward Established (about 5 quality-checked clips).
+- Process is rate-limited to **6 / 15 min** per user. Retry is idempotent if that clip is already running.
 
-## Repo layout
+**Analysis**
 
-```
-frontend/     Next.js app
-backend/      FastAPI app
-supabase/     SQL migrations
-PROJECT_PLAN.md
-```
+- Playing-style profile with an evidence badge (Building / Established).
+- Physical context copy — height shapes which NBA bodies are realistic, not how you play.
+- Primary comps (style + body plausible) vs style-only (size mismatch, for learning).
+- Dual bars: orange = you, gray = them. Why-this-match is computed JSON, not model invention.
+- Optional Gemini writeup that narrates stored JSON only — it does not pick names.
 
-## Phase 0 setup
+**Account**
+
+- Email + password via Supabase Auth.
+- Setup wizard: name, height (ft/in), position, dominant hand, primary skill.
+- Incomplete profiles cannot reach the dashboard.
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 18+ and npm.
+- Python 3.11+ (backend venv).
+- A [Supabase](https://supabase.com) project with Email auth.
+- Optional: `GEMINI_API_KEY` for narration.
 
 ### 1. Supabase
 
-1. Create a free project at [supabase.com](https://supabase.com).
-2. Enable Email auth (Authentication → Providers → Email).
-   - **Local dev:** turn **OFF** “Confirm email” so signup logs you in immediately and avoids Supabase’s tiny built-in email quota (~2 emails/hour on free tier).
-3. Run migrations in the SQL Editor (in order):
-   - [`supabase/migrations/20260813160000_phase0_schema.sql`](./supabase/migrations/20260813160000_phase0_schema.sql)
-   - … subsequent phase migrations …
-   - [`supabase/migrations/20260817220000_phase10_role_profile_data_contracts.sql`](./supabase/migrations/20260817220000_phase10_role_profile_data_contracts.sql) *(Phase 10.1 — role-profile tables)*
-4. Copy keys from **Project Settings → API**:
-   - Project URL
-   - `anon` public key
-   - `service_role` key (backend only)
-   - JWT Secret (Settings → API → JWT Settings)
+1. Create a free project.
+2. Enable Email auth. For local dev, turn **OFF** “Confirm email” so signup logs you in immediately and avoids the tiny built-in email quota.
+3. Run every file in [`supabase/migrations/`](./supabase/migrations/) in the SQL Editor, in filename order.
+4. From **Project Settings → API**, copy Project URL, `anon` key, `service_role` key, and JWT secret.
 
 ### 2. Frontend
 
 ```bash
 cd frontend
 cp .env.example .env.local
-# fill NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_API_DIRECT_URL
+# NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_API_DIRECT_URL
 npm install
 npm run dev
 ```
@@ -103,160 +153,150 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# fill SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET, SUPABASE_SERVICE_ROLE_KEY
+# SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET, SUPABASE_SERVICE_ROLE_KEY
 # optional: GEMINI_API_KEY
-MPLCONFIGDIR=/tmp/mpl MEDIAPIPE_DISABLE_GPU=1 uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-- Public health: `GET http://localhost:8000/health`
-- Protected smoke: `GET http://localhost:8000/me` with `Authorization: Bearer <supabase_access_token>`
-
-### Phase 0 exit criteria
-
-- [x] Two users can sign up
-- [x] Each user sees only their empty dashboard shell
-- [x] No clip processing yet (starts in Phase 1)
-
-### Troubleshooting: “email rate limit exceeded”
-
-Supabase’s **built-in email sender** has a very low rate limit on the free tier. Each signup with “Confirm email” ON sends a mail and counts toward that limit (including failed retries).
-
-**Fix for development:**
-
-1. Supabase Dashboard → **Authentication** → **Providers** → **Email**
-2. Turn **OFF** “Confirm email”
-3. Wait ~15–60 minutes for the rate limit to reset, then sign up again
-
-**Immediate workaround:** Supabase Dashboard → **Authentication** → **Users** → **Add user** (email + password, auto-confirm). Then sign in at `/login`.
-
-## Local run (current)
-
-1. Start backend (no `--reload` — MediaPipe can kill the reloader):
-
-```bash
-cd backend
 MPLCONFIGDIR=/tmp/mpl MEDIAPIPE_DISABLE_GPU=1 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-2. Start frontend: `cd frontend && npm run dev`
-3. Open [http://localhost:3000](http://localhost:3000) → sign in → dashboard.
+Do **not** pass `--reload` — MediaPipe can kill the reloader. Restart uvicorn after Python changes.
 
-Clips: mp4/mov, max **25s** and **50MB**. Gameplay: draw a box, then process. Idempotent Retry will not start a second job if that clip is already running. Process is rate-limited to **6 / 15 min** per user.
+- Health: `GET http://127.0.0.1:8000/health`
+- First pose run downloads `pose_landmarker_lite.task` into `backend/models/`
+- Seed NBA rows once: `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
 
-## Deploy (free tier)
+### Email rate limit
 
-Public URLs need your Vercel + Render accounts. Config is in-repo; env values stay in each dashboard (never commit `.env`).
+Supabase’s built-in sender is tiny on the free tier.
+
+1. Auth → Providers → Email → turn **OFF** “Confirm email”.
+2. Or Auth → Users → **Add user** (auto-confirm), then sign in at `/login`.
+
+[↑ back to top](#contents)
+
+## Architecture
+
+Two clients, one API, one database:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Next.js (App Router)                     │
+│   /  /login  /signup  /setup                                 │
+│   /dashboard (Clips)   /dashboard/analysis                   │
+└──────────────────────────▲──────────────────────────────────┘
+                           │ Bearer + cookies (Supabase Auth)
+              ┌────────────┴────────────┐
+              │                         │
+       ┌──────┴──────┐           ┌──────┴──────┐
+       │   FastAPI   │           │  Supabase   │
+       │  :8000      │           │ Auth · DB   │
+       │ clips/comp  │◄──────────│ Storage     │
+       │ profile     │  service  │ `clips`     │
+       └──────▲──────┘  role     └─────────────┘
+              │
+       MediaPipe Pose · optional CSRT track · Gemini (optional)
+```
+
+- **Auth** — Supabase email/password. Middleware sends incomplete profiles to `/setup`.
+- **Clips plane** — upload to Storage, pose job, keypoints, overlay video, clip features.
+- **Role plane** — event gates → aggregate role vector → masked percentile distance vs NBA `role_vector` → named / style-only / archetype.
+- **Mechanics plane** — aggregated pose features + history. Never an input to `POST /me/comp`.
+
+## Project structure
+
+```
+frontend/                    Next.js 16 + Tailwind
+  src/app/
+    page.tsx                 landing
+    login/ signup/ setup/    auth + profile onboarding
+    dashboard/page.tsx       Clips (profile · upload · list)
+    dashboard/analysis/      Role analysis + mechanics
+  src/components/            clip list, upload, comps, bbox picker
+  src/lib/                   API client, Supabase, profile helpers
+
+backend/                    FastAPI
+  app/api/                   clips, profile, comp, health
+  app/services/
+    pose_extraction.py       MediaPipe
+    track.py                 gameplay box follow
+    features/                shot / pass / drive mechanics
+    role_profile/            gates, aggregate, pool, score, named, why
+    llm.py                   optional Gemini narration
+  app/scripts/               process_clip, seed_nba_players, extract_pose
+  tests/                     gates, score, regressions, pose, track
+
+supabase/migrations/         schema, profile, role-profile contracts, bbox start
+design-system/hoopprint/     UI tokens / page notes
+```
+
+[↑ back to top](#contents)
+
+## Design system
+
+Light zinc canvas, orange wordmark (`#C2410C`), black CTAs, white cards. Clips is a three-column dashboard; Analysis is a report plus a sticky run-settings card. Tokens and page notes live in [`design-system/hoopprint/`](./design-system/hoopprint/).
+
+## Deploy
+
+Public URLs need Vercel + Render. Env stays in each dashboard — never commit `.env`.
 
 ### Backend → Render
 
-1. New **Web Service**, connect this GitHub repo.
-2. Use Docker: Dockerfile `backend/Dockerfile`, context `backend/` (or Blueprint [`render.yaml`](./render.yaml)).
+1. New **Web Service**, connect the repo.
+2. Docker: [`backend/Dockerfile`](./backend/Dockerfile), context `backend/` (or Blueprint [`render.yaml`](./render.yaml)).
 3. Health check: `/health`.
-4. Set env vars (same names as [`backend/.env.example`](./backend/.env.example)):
-   - `ENVIRONMENT=production`
-   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`
-   - `CORS_ORIGINS=https://YOUR_VERCEL_APP.vercel.app` (comma-separate preview URLs if needed)
-   - `GEMINI_API_KEY` and `GEMINI_MODEL=gemini-2.5-flash` (optional; comps still work without narration)
-5. After first deploy, copy the `onrender.com` URL.
+4. Env (same names as [`backend/.env.example`](./backend/.env.example)): `ENVIRONMENT=production`, Supabase keys, `CORS_ORIGINS=https://YOUR_VERCEL_APP.vercel.app`, optional `GEMINI_API_KEY`.
+5. Copy the `onrender.com` URL after first deploy.
 
-Free Render will **spin down** after idle; the first request can take ~30–60s. Pose on a 512MB instance can still OOM on huge files — stay under 50MB.
+Free Render sleeps when idle; the first request can take ~30–60s. Stay under 50MB so pose does not OOM on 512MB.
 
 ### Frontend → Vercel
 
 1. Import the repo, **Root Directory** `frontend`.
-2. Env:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `NEXT_PUBLIC_API_DIRECT_URL=https://YOUR_RENDER_SERVICE.onrender.com`
-3. Redeploy after the Render URL is known.
-4. Add the Vercel origin to Render `CORS_ORIGINS`.
+2. Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_DIRECT_URL=https://YOUR_RENDER_SERVICE.onrender.com`.
+3. Add the Vercel origin to Render `CORS_ORIGINS` and to Supabase Auth redirect URLs.
 
 ### Production Supabase
 
 - Same project as local is fine for MVP.
-- Auth → URL configuration: add `https://YOUR_VERCEL_APP.vercel.app` to Site URL / Redirect URLs.
-- Storage bucket `clips` stays **50MB** on the free plan (global file-size cap).
-- Run all SQL in `supabase/migrations/` if this is a new project.
-- Seed NBA rows once: `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
+- Storage bucket `clips` stays **50MB** on the free plan.
+- Run all SQL in `supabase/migrations/` on a new project.
+- Seed NBA rows once from the backend.
 
-## Free-tier limits
+### Free-tier limits
 
 | Service | What you will hit |
 |---------|-------------------|
 | Render free | Cold starts, 512MB RAM, sleeps when idle |
 | Supabase free | Pauses after inactivity; **50MB** upload cap; Auth email quota |
-| Gemini free | Daily token quota; app fails closed (why/recs JSON still saved) |
+| Gemini free | Daily token quota; app fails closed (why / recs JSON still saved) |
 | Vercel Hobby | Fine for this Next.js app |
 
-## Scale checklist
+## Roadmap
 
-1. **Render paid** — no sleep, more RAM/CPU for MediaPipe.
-2. **Supabase Pro** — no pause; raise storage if clip volume grows.
-3. **LLM** — paid Gemini, or `LLM_PROVIDER=anthropic` / `openai` with the same prompt.
-4. Later: job queue if process blocks HTTP; CDN for overlay video.
+**Shipped** — clip upload and pose, gameplay bbox + track, mechanics aggregation, gated role events, provenance-backed NBA seed, role-first named comps with height as body plausibility, profile setup, Clips / Analysis UI.
 
-## What's next
+**Next**
 
-**Phase 10** (current priority): role-profile pivot — data contracts, event gates, provenance-backed NBA seed, masked percentile scoring, dashboard/README copy, disable legacy engine. See PROJECT_PLAN.md §Phase 10.
+1. **Basketball action detection.** Use pose, ball, and court tracking to detect dribbles, drives, shots, passes, cuts, screens, rebounds, and defensive movement from uploaded clips.
+2. **ML role-profile model.** Aggregate those actions into an interpretable playing-style profile — on-ball creation, rim pressure, catch-and-shoot, off-ball movement, playmaking, interior activity, and defense — then classify users into probabilistic basketball archetypes.
+3. **Learned NBA ranking.** Match the user’s role profile to NBA role data with a similarity model, while keeping height, wingspan, and standing reach as a separate body-plausibility layer for realistic primary comps and clearly labeled style-only references.
 
-### Phase 9 — Hardening + deploy
+Nearer-term: paid Render / more RAM so 4K clips do not starve MediaPipe, a stronger event mix so rim-pressure actually ranks, a job queue if process stays on the HTTP worker, and overlay / bbox polish on smaller screens.
 
-### Phase 8 — Dashboard UI
+[↑ back to top](#contents)
 
-Results-first dashboard: mechanics panel, playing-style profile (Phase 10), NBA role resemblances when evidence is established, split recs, Gemini narration (optional), overlay, history, touch bbox.
+## Limits
 
-### Phase 7 — Gameplay bbox + tracking
+HoopPrint uses MediaPipe Pose landmarks from a **single player**. It does not directly track the ball, basket, defenders, teammates, pass target, contest level, shot result, dribble count, or full-game possession context.
 
-Upload as **gameplay** → draw a box around yourself on the first frame → CSRT (or template fallback) tracks that person only → pose on the crop → same features/comps as individual clips.
+Accordingly, HoopPrint:
 
-- `GET /clips/{id}/first-frame`
-- `POST /clips/{id}/bbox`
-- Lost track for 5 frames → skip pose on those frames (no second person)
+- Does not measure true ball-release angle, ball arc, entry angle, shot distance, or make probability from pose alone.
+- Does not infer assists, pass completion, turnover risk, defender pressure, or basketball IQ from a one-player clip.
+- Does not use pose mechanics to compare a user with NBA shooting percentages or NBA player mechanics.
+- Treats uploaded clip events as sampled evidence, not as full-game rates such as drives per game.
 
-### Phase 6 — Why this match + personalized recs
+## Acknowledgements
 
-After `POST /me/comp`, each match includes a computed `why` (filter + dimension gaps + evidence tier). Recs split into **mechanics_recs** and **role_recs** (Phase 10). Gemini narrates stored JSON only — it does not select candidates or make performance claims.
-
-- Set `GEMINI_API_KEY` in `backend/.env` (optional — why/recs still save if unset)
-- Dashboard shows why, next steps, and writeup when available
-
-### Phase 5 — NBA comps *(legacy — replaced by Phase 10 role profile)*
-
-Full-roster seed from `nba_api` now writes `role_vector` + provenance. Cosine `style_vector` matching is disabled on `POST /me/comp`.
-
-- Seed (once per season, after role-profile columns exist): `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba_players`
-- API: `POST /me/comp`, `GET /me/comp` — `comparison_mode: "role_profile_v1"`
-
-Pose mechanics are returned separately and must **not** feed role matching.
-### Phase 4 — Aggregation + profile questionnaire
-
-- After each successful clip, features average into `user_profiles_agg`
-- Dashboard **Your profile** form: height → `height_z`, position, hand, primary skill
-- `GET` / `PATCH /me/profile`, `GET /me/history`
-- Run migration: `supabase/migrations/20260814160000_phase4_profile_questionnaire.sql` in the Supabase SQL Editor
-
-### Phase 3 — Feature extraction
-
-Pose keypoints → deterministic shot / pass / drive features in `clip_features`.
-
-- Inspect: `GET /clips/{id}/features`
-- Reprocess a clip to write features: `POST /clips/{id}/process` or CLI
-- Units and landmark assumptions: `backend/app/services/features/geometry.py`
-
-### Phase 2 — Pose extraction (individual)
-
-MediaPipe Pose on individual clips → `keypoints` rows in Postgres.
-
-- Auto-processes after upload for `source_type=individual`
-- Manual retry: `POST /clips/{id}/process`
-- Inspect: `GET /clips/{id}/keypoints`
-- CLI: `cd backend && PYTHONPATH=. python -m app.scripts.process_clip <clip_id>`
-- First run downloads `pose_landmarker_lite.task` into `backend/models/`
-
-### Phase 1 — Upload clips
-
-Dashboard upload form → `POST /clips` → Supabase Storage + `clips` row.
-
-- mp4/mov, max ~25s, 50MB
-- Individual clips → status `uploaded`
-- Gameplay clips → status `awaiting_bbox` (bbox UI in Phase 7)
+- [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker) — pose landmarks.
+- [`nba_api`](https://github.com/swar/nba_api) — public NBA tracking and scoring endpoints.
+- Supabase, Next.js, FastAPI, Tailwind.
