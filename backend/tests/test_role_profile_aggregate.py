@@ -98,6 +98,14 @@ def test_faster_catch_is_higher_latent():
     assert event_latent_score(fast) > event_latent_score(slow)  # type: ignore[operator]
 
 
+def test_pull_up_latent_is_lower_than_catch_and_shoot():
+    catch = _event(RoleDimension.catch_readiness, raw=0.4, extra={"shot_origin": "catch_and_shoot"})
+    pull = _event(RoleDimension.catch_readiness, raw=1.8, extra={"shot_origin": "pull_up"})
+    assert event_latent_score(pull) is not None
+    assert event_latent_score(catch) is not None
+    assert event_latent_score(pull) < event_latent_score(catch)
+
+
 def test_emerging_after_three_events():
     user = uuid4()
     events = [
@@ -144,7 +152,7 @@ def test_low_confidence_suppresses_dimension():
     assert profile.role_vector.rim_pressure_tendency is None
 
 
-def test_established_needs_five_events_two_sessions_and_stability():
+def test_established_with_five_events_each_of_two_dimensions():
     user = uuid4()
     events = []
     for i in range(5):
@@ -185,7 +193,7 @@ def test_established_needs_five_events_two_sessions_and_stability():
     assert not (set(dumped) & BANNED_MECHANICS_KEYS)
 
 
-def test_one_dimension_established_is_not_named_match_tier():
+def test_five_valid_events_one_dimension_is_established():
     user = uuid4()
     events = [
         ClipEventRecord(
@@ -194,16 +202,16 @@ def test_one_dimension_established_is_not_named_match_tier():
                     RoleDimension.catch_readiness,
                     raw=0.48,
                     confidence=0.85,
-                    session=date(2026, 8, 1 + i % 2),
+                    session=date(2026, 8, 1),
                 ).model_dump(),
                 "user_id": user,
             }
         )
-        for i in range(5)
+        for _ in range(5)
     ]
     profile = aggregate_role_profile(events, user_id=user, rng=random.Random(4), n_iter=80)
     assert profile.catch_readiness.status == RoleDimensionStatus.established
-    assert profile.evidence_tier == EvidenceTier.emerging
+    assert profile.evidence_tier == EvidenceTier.established
     assert profile.playmaking.status == RoleDimensionStatus.not_observed
 
 
@@ -216,9 +224,9 @@ def test_bootstrap_high_variance_is_not_stable():
 
 def test_dimension_status_thresholds():
     assert dimension_status(event_count=0, session_count=0, median_confidence=None, stable=False) == RoleDimensionStatus.not_observed
-    assert dimension_status(event_count=2, session_count=1, median_confidence=0.9, stable=False) == RoleDimensionStatus.insufficient
+    assert dimension_status(event_count=2, session_count=1, median_confidence=0.9, stable=False) == RoleDimensionStatus.emerging
     assert dimension_status(event_count=3, session_count=1, median_confidence=0.72, stable=False) == RoleDimensionStatus.emerging
-    assert dimension_status(event_count=5, session_count=2, median_confidence=0.8, stable=True) == RoleDimensionStatus.established
+    assert dimension_status(event_count=5, session_count=1, median_confidence=0.8, stable=False) == RoleDimensionStatus.established
 
 
 def test_build_user_role_vector_from_aggregate_output():

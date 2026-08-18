@@ -68,9 +68,18 @@ def argmin_valid(values: list[float | None]) -> int | None:
 def find_shot_release_index(
     frames: list[tuple[int, LandmarkLookup]], dominant_hand: str
 ) -> int | None:
-    """Peak shooting-wrist height (y-up) — proxy for ball release."""
+    """Last prominent shooting-wrist peak (y-up) — proxy for ball release.
+
+    Prefer the last local max so an early high dribble/gather does not beat the
+    actual jumper. Falls back to global argmax when there is no interior peak
+    (e.g. tracking started at the apex).
+    """
     names = side_names(dominant_hand)
-    return argmax_valid(_wrist_heights(frames, names["wrist"]))
+    heights = _wrist_heights(frames, names["wrist"])
+    peaks = local_maxima_indices(heights, min_prominence=0.02)
+    if peaks:
+        return peaks[-1]
+    return argmax_valid(heights)
 
 
 def find_pass_release_index(

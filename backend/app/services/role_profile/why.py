@@ -54,8 +54,14 @@ def build_role_why(
         "score_terms": {
             "distance": match.get("distance"),
             "height_tiebreak": match.get("height_tiebreak"),
+            "body_plausibility": match.get("body_plausibility"),
+            "sample_confidence": match.get("sample_confidence"),
+            "listed_role_preference": match.get("listed_role_preference"),
+            "combined_score": match.get("combined_score"),
             "ranking_distance": match.get("ranking_distance"),
             "resemblance_band": match.get("resemblance_band"),
+            "comp_bucket": match.get("comp_bucket"),
+            "body_mismatch": match.get("body_mismatch"),
             "total": match.get("score"),
             "user_scale": user_scale,
             "nba_scale": "cohort_percentile",
@@ -65,8 +71,18 @@ def build_role_why(
         "evidence_tier": evidence_tier,
         "pool_sentence": pool.pool_sentence,
         "note": (
-            "Public-stat role resemblance within the comparison pool. "
-            "Not shared mechanics, skill, or predicted performance."
+            "Style similarity, body mismatch. Learning reference only — not a primary "
+            "'you are this player' comparison."
+            if match.get("comp_bucket") == "style_only"
+            else (
+                "Exceptionally close role resemblance with a notable size gap "
+                "(style similarity, body mismatch)."
+                if match.get("body_mismatch")
+                else (
+                    "Public-stat role resemblance with a physically plausible NBA body. "
+                    "Not shared mechanics, skill, or predicted performance."
+                )
+            )
         ),
     }
 
@@ -83,13 +99,17 @@ def build_role_llm_prompt(
     role_recs: list[dict],
     evidence_tier: str,
     named_matches_suppressed: bool,
+    style_only_matches: list[dict] | None = None,
+    physical_context: str | None = None,
 ) -> str:
     return (
         "You explain a basketball ROLE-PROFILE result that was already computed. "
         "Do not pick a different NBA player. Do not invent statistics. "
         "Do not say pose mechanics equal box-score percentages. "
         "Do not claim the user shoots, passes, or drives like the NBA player mechanically. "
-        "Do not claim outcome prediction or NBA skill.\n\n"
+        "Do not claim outcome prediction or NBA skill. "
+        "Do not say the user 'is' a style-only reference player. "
+        "Height is body plausibility only — it does not determine playing style.\n\n"
         f"EVIDENCE_TIER: {evidence_tier}\n"
         f"NAMED_MATCHES_SUPPRESSED: {named_matches_suppressed}\n\n"
         f"QUESTIONNAIRE:\n{json.dumps(questionnaire, indent=2)}\n\n"
@@ -98,14 +118,17 @@ def build_role_llm_prompt(
         f"ARCHETYPE:\n{json.dumps(archetype or {}, indent=2)}\n\n"
         f"MECHANICS (pose only — do not use for the NBA comparison):\n"
         f"{json.dumps(mechanics, indent=2)}\n\n"
-        f"TOP_MATCH:\n{json.dumps(top_match or {}, indent=2, default=str)}\n\n"
+        f"PRIMARY_MATCH:\n{json.dumps(top_match or {}, indent=2, default=str)}\n\n"
+        f"STYLE_ONLY_REFERENCES:\n{json.dumps(style_only_matches or [], indent=2, default=str)}\n\n"
+        f"PHYSICAL_CONTEXT:\n{physical_context or ''}\n\n"
         f"WHY:\n{json.dumps(why or {}, indent=2, default=str)}\n\n"
         f"MECHANICS_RECS:\n{json.dumps(mechanics_recs, indent=2)}\n\n"
         f"ROLE_RECS:\n{json.dumps(role_recs, indent=2)}\n\n"
         "Write exactly two sections:\n"
         "## Role resemblance\n"
         "1–2 short paragraphs. If named matches are suppressed, explain the archetype only. "
-        "State that this is a public-stat role resemblance, not identical motion.\n\n"
+        "State that this is a public-stat role resemblance, not identical motion. "
+        "If style-only references exist, say they are for learning, not body-plausible comps.\n\n"
         "## Next steps\n"
         "2–3 bullets. Mechanics bullets may only use MECHANICS_RECS (no NBA player names). "
         "Role bullets may only use ROLE_RECS. Do not add drills that are not in those lists.\n"

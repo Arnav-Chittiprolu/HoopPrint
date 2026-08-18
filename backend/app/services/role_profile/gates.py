@@ -30,11 +30,14 @@ from app.services.role_profile.constants import (
     CATCH_RELEASE_MIN_S,
     MAX_WRIST_SEPARATION_FOR_CATCH,
     MIN_HIP_BURST_BODY_LENGTHS,
+    MIN_HIP_TRAVEL_FOR_PULL_UP,
+    MIN_POSE_SAMPLES_FOR_PASS,
     MIN_POST_POSE_SAMPLES,
     MIN_PRE_POSE_SAMPLES,
     MIN_TRACK_CONFIDENCE,
     MIN_VIDEO_FPS,
     MIN_WRIST_SEPARATION_FOR_CATCH,
+    PLAYMAKING_EXTENSION_FLOOR_DEG,
 )
 
 
@@ -58,6 +61,58 @@ def _timing_confidence(seconds: float) -> float:
     if half <= 0:
         return 1.0
     return _clamp01(1.0 - abs(seconds - mid) / half)
+
+
+def _hip_travel_body_lengths(
+    parsed: list[tuple[int, LandmarkLookup]],
+    end_list_index: int | None = None,
+) -> float:
+    """Max hip path span in the window, not just start-to-end.
+
+    A pull-up jumper often lands near where they jumped, so hips[-1] - hips[0]
+    can be ~0 even when there was a clear jump. If `end_list_index` is None,
+    use the full clip (needed when tracking starts at the shot itself).
+    """
+    if end_list_index is None:
+        window = parsed
+    else:
+        window = parsed[: max(end_list_index, 0) + 1]
+    standing = mean_standing_height(window) or 1.0
+    hips: list[np.ndarray] = []
+    for _, lookup in window:
+        hip = mid_hip(lookup)
+        if hip is not None:
+            hips.append(hip)
+    if len(hips) < 2:
+        return 0.0
+    arr = np.stack(hips)
+    from_start = float(np.max(np.linalg.norm(arr - arr[0], axis=1)))
+    bbox_span = float(np.linalg.norm(arr.max(axis=0) - arr.min(axis=0)))
+    return max(from_start, bbox_span) / max(float(standing), 1e-6)
+
+
+def _hip_vertical_range_body_lengths(
+    parsed: list[tuple[int, LandmarkLookup]],
+) -> float:
+    standing = mean_standing_height(parsed) or 1.0
+    ys: list[float] = []
+    for _, lookup in parsed:
+        hip = mid_hip(lookup)
+        if hip is not None:
+            ys.append(float(hip[1]))
+    if len(ys) < 2:
+        return 0.0
+    return (max(ys) - min(ys)) / max(float(standing), 1e-6)
+
+
+def _catch_ok(lookup: LandmarkLookup) -> tuple[bool, float | None]:
+    left = lookup.xy("left_wrist")
+    right = lookup.xy("right_wrist")
+    if left is None or right is None:
+        return False, None
+    wrist_sep = float(np.linalg.norm(left - right))
+    ok = MIN_WRIST_SEPARATION_FOR_CATCH <= wrist_sep <= MAX_WRIST_SEPARATION_FOR_CATCH
+    return ok, wrist_sep
 
 
 def gate_catch_readiness(
@@ -90,55 +145,73 @@ def gate_catch_readiness(
     if arm_vis < 0.35:
         return GateResult(False, "low_pose_visibility", signal, quality, None)
 
-    catch_idx = find_catch_index(parsed, before_index=release_idx)
-    if catch_idx is None or catch_idx >= release_idx:
-        return GateResult(False, "no_catch_proxy", signal, quality, None)
-
-    catch_frame, catch_lookup = parsed[catch_idx]
-    left = catch_lookup.xy("left_wrist")
-    right = catch_lookup.xy("right_wrist")
-    if left is None or right is None:
-        return GateResult(False, "no_catch_proxy", signal, quality, None)
-
-    wrist_sep = float(np.linalg.norm(left - right))
-    quality["wrist_separation_at_catch"] = wrist_sep
-    if wrist_sep > MAX_WRIST_SEPARATION_FOR_CATCH:
-        return GateResult(False, "no_catch_proxy", signal, quality, None)
-    if wrist_sep < MIN_WRIST_SEPARATION_FOR_CATCH:
-        return GateResult(False, "no_catch_proxy", signal, quality, None)
-
-    pre_catch = catch_idx
-    post_release = len(parsed) - release_idx - 1
-    quality["pre_catch_pose_samples"] = pre_catch
-    quality["post_release_pose_samples"] = post_release
-    if pre_catch < MIN_PRE_POSE_SAMPLES or post_release < MIN_POST_POSE_SAMPLES:
-        return GateResult(False, "insufficient_pre_post_window", signal, quality, None)
-
-    signal["catch_frame_index"] = catch_frame
-    signal["release_frame_index"] = release_frame
-    signal["gather_to_release_pose_frames"] = float(release_frame - catch_frame)
-
     if video_fps is None or video_fps < MIN_VIDEO_FPS:
         return GateResult(False, "missing_fps", signal, quality, None)
-
-    catch_to_release_s = (release_frame - catch_frame) / float(video_fps)
-    signal["catch_to_release_s"] = catch_to_release_s
     quality["video_fps"] = video_fps
 
-    if catch_to_release_s < CATCH_RELEASE_MIN_S or catch_to_release_s > CATCH_RELEASE_MAX_S:
-        return GateResult(
-            False,
-            "catch_timing_out_of_range",
-            signal,
-            quality,
-            _timing_confidence(catch_to_release_s) * 0.5,
-        )
+    catch_idx = find_catch_index(parsed, before_index=release_idx)
+    has_catch = False
+    catch_to_release_s: float | None = None
+    if catch_idx is not None and catch_idx < release_idx:
+        catch_frame, catch_lookup = parsed[catch_idx]
+        catch_ok, wrist_sep = _catch_ok(catch_lookup)
+        quality["wrist_separation_at_catch"] = wrist_sep
+        if catch_ok:
+            has_catch = True
+            catch_to_release_s = (release_frame - catch_frame) / float(video_fps)
+            signal["catch_frame_index"] = catch_frame
+            signal["gather_to_release_pose_frames"] = float(release_frame - catch_frame)
 
-    confidence = _clamp01(
-        0.35 * arm_vis
-        + 0.25 * mean_track_conf
-        + 0.40 * _timing_confidence(catch_to_release_s)
-    )
+    hip_travel_to_release = _hip_travel_body_lengths(parsed, release_idx)
+    hip_travel = _hip_travel_body_lengths(parsed)
+    hip_vertical = _hip_vertical_range_body_lengths(parsed)
+    quality["hip_travel_body_lengths"] = hip_travel
+    quality["hip_travel_to_release_body_lengths"] = hip_travel_to_release
+    quality["hip_vertical_range_body_lengths"] = hip_vertical
+
+    pre_samples = catch_idx if has_catch and catch_idx is not None else release_idx
+    post_release = len(parsed) - release_idx - 1
+    quality["pre_pose_samples"] = pre_samples
+    quality["post_release_pose_samples"] = post_release
+
+    moving_into_shot = max(hip_travel, hip_vertical) >= MIN_HIP_TRAVEL_FOR_PULL_UP
+
+    origin: str | None = None
+    if has_catch and catch_to_release_s is not None:
+        origin = "catch_and_shoot" if catch_to_release_s <= CATCH_RELEASE_MAX_S else "pull_up"
+    elif moving_into_shot:
+        origin = "pull_up"
+    else:
+        origin = None
+
+    if origin == "catch_and_shoot":
+        if pre_samples < MIN_PRE_POSE_SAMPLES or post_release < MIN_POST_POSE_SAMPLES:
+            return GateResult(False, "insufficient_pre_post_window", signal, quality, None)
+    elif origin == "pull_up":
+        # Box often starts on the jumper (no pre-release) or ends at the peak
+        # (no follow-through). Either side of the shot is enough.
+        if pre_samples < MIN_PRE_POSE_SAMPLES and post_release < MIN_POST_POSE_SAMPLES:
+            return GateResult(False, "insufficient_pre_post_window", signal, quality, None)
+    else:
+        return GateResult(False, "form_shot", signal, quality, None)
+
+    signal["release_frame_index"] = release_frame
+    signal["shot_origin"] = origin
+    if catch_to_release_s is None:
+        catch_to_release_s = CATCH_RELEASE_MAX_S
+    signal["catch_to_release_s"] = catch_to_release_s
+
+    if origin == "catch_and_shoot":
+        confidence = _clamp01(
+            0.35 * arm_vis
+            + 0.25 * mean_track_conf
+            + 0.40 * _timing_confidence(max(catch_to_release_s, CATCH_RELEASE_MIN_S))
+        )
+    else:
+        confidence = _clamp01(0.35 * arm_vis + 0.25 * mean_track_conf + 0.28)
+        if moving_into_shot:
+            confidence = _clamp01(confidence + 0.1)
+
     return GateResult(True, None, signal, quality, confidence)
 
 
@@ -263,26 +336,31 @@ def gate_pass_event(
 
     frame_index, lookup = parsed[peak_list_index]
     names = side_names(dominant_hand)
-    shoulder = lookup.xy(names["shoulder"])
-    elbow = lookup.xy(names["elbow"])
-    wrist = lookup.xy(names["wrist"])
-    if shoulder is None or elbow is None or wrist is None:
-        return GateResult(False, "low_pose_visibility", signal, quality, None)
-
-    arm_vis = _shooting_arm_visibility(lookup, names)
+    other_names = side_names("left" if names["wrist"].startswith("right") else "right")
+    arm_vis = max(
+        _shooting_arm_visibility(lookup, names),
+        _shooting_arm_visibility(lookup, other_names),
+    )
     quality["pass_arm_visibility"] = arm_vis
     if arm_vis < 0.35:
         return GateResult(False, "low_pose_visibility", signal, quality, None)
 
+    quality["pose_sample_count"] = len(parsed)
+    if len(parsed) < MIN_POSE_SAMPLES_FOR_PASS:
+        return GateResult(False, "sparse_track", signal, quality, None)
+
     pre, post = _count_pre_post(parsed, peak_list_index)
     quality["pre_pose_samples"] = pre
     quality["post_pose_samples"] = post
-    if pre < MIN_PRE_POSE_SAMPLES or post < MIN_POST_POSE_SAMPLES:
+    # Tracking often starts on the throw or ends right after it.
+    if pre < MIN_PRE_POSE_SAMPLES and post < MIN_POST_POSE_SAMPLES:
         return GateResult(False, "insufficient_pre_post_window", signal, quality, None)
 
     try:
-        extension = angle_at(elbow, shoulder, wrist)
+        extension = _best_arm_extension(lookup, dominant_hand)
     except ValueError:
+        return GateResult(False, "no_pass_release", signal, quality, None)
+    if extension is None:
         return GateResult(False, "no_pass_release", signal, quality, None)
 
     signal["release_frame_index"] = frame_index
@@ -298,16 +376,28 @@ def gate_pass_event(
         else:
             signal["gather_to_release_pose_frames"] = float(frame_index - catch_frame)
 
-    if extension < 100.0:
+    nearby_max = extension
+    lo = max(0, peak_list_index - 2)
+    hi = min(len(parsed), peak_list_index + 3)
+    for _, nearby in parsed[lo:hi]:
+        other = _best_arm_extension(nearby, dominant_hand)
+        if other is not None:
+            nearby_max = max(nearby_max, other)
+    signal["arm_extension_deg"] = float(nearby_max)
+    quality["video_fps"] = video_fps if video_fps is not None else quality.get("video_fps")
+
+    if nearby_max < PLAYMAKING_EXTENSION_FLOOR_DEG:
         return GateResult(
             False,
             "no_pass_release",
             signal,
             quality,
-            _clamp01(extension / 100.0) * 0.5,
+            _clamp01(nearby_max / PLAYMAKING_EXTENSION_FLOOR_DEG) * 0.5,
         )
 
-    confidence = _clamp01(0.40 * arm_vis + 0.30 * mean_track_conf + 0.30 * (extension / 180.0))
+    confidence = _clamp01(
+        0.40 * arm_vis + 0.30 * mean_track_conf + 0.30 * (nearby_max / 180.0)
+    )
     return GateResult(True, None, signal, quality, confidence)
 
 
@@ -315,20 +405,45 @@ def find_pass_release_peaks(
     parsed: list[tuple[int, LandmarkLookup]],
     dominant_hand: str,
 ) -> list[int]:
+    dominant_series = _elbow_series(parsed, dominant_hand)
+    other = "left" if str(dominant_hand).lower().startswith("r") else "right"
+    other_series = _elbow_series(parsed, other)
+    dom_max = max((v for v in dominant_series if v is not None), default=float("-inf"))
+    oth_max = max((v for v in other_series if v is not None), default=float("-inf"))
+    series = other_series if oth_max > dom_max else dominant_series
+    return local_maxima_indices(series, min_prominence=8.0)
+
+
+def _elbow_series(
+    parsed: list[tuple[int, LandmarkLookup]], dominant_hand: str
+) -> list[float | None]:
     names = side_names(dominant_hand)
     elbow_series: list[float | None] = []
     for _, lookup in parsed:
-        shoulder = lookup.xy(names["shoulder"])
-        elbow = lookup.xy(names["elbow"])
-        wrist = lookup.xy(names["wrist"])
-        if shoulder is None or elbow is None or wrist is None:
-            elbow_series.append(None)
-            continue
-        try:
-            elbow_series.append(angle_at(elbow, shoulder, wrist))
-        except ValueError:
-            elbow_series.append(None)
-    return local_maxima_indices(elbow_series, min_prominence=8.0)
+        elbow_series.append(_arm_extension(lookup, names))
+    return elbow_series
+
+
+def _best_arm_extension(lookup: LandmarkLookup, dominant_hand: str) -> float | None:
+    dominant = _arm_extension(lookup, side_names(dominant_hand))
+    other_hand = "left" if str(dominant_hand).lower().startswith("r") else "right"
+    other = _arm_extension(lookup, side_names(other_hand))
+    values = [v for v in (dominant, other) if v is not None]
+    if not values:
+        return None
+    return max(values)
+
+
+def _arm_extension(lookup: LandmarkLookup, names: dict[str, str]) -> float | None:
+    shoulder = lookup.xy(names["shoulder"])
+    elbow = lookup.xy(names["elbow"])
+    wrist = lookup.xy(names["wrist"])
+    if shoulder is None or elbow is None or wrist is None:
+        return None
+    try:
+        return float(angle_at(elbow, shoulder, wrist))
+    except ValueError:
+        return None
 
 
 def _count_pre_post(

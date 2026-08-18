@@ -34,7 +34,7 @@ export async function updateSession(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const isAuthRoute = path.startsWith("/login") || path.startsWith("/signup");
-  const isProtected = path.startsWith("/dashboard");
+  const isProtected = path.startsWith("/dashboard") || path.startsWith("/setup");
 
   if (!user && isProtected) {
     const redirectUrl = request.nextUrl.clone();
@@ -43,10 +43,37 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && isAuthRoute) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/dashboard";
-    return NextResponse.redirect(redirectUrl);
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("display_name, height_in, position, dominant_hand, primary_skill")
+      .eq("id", user.id)
+      .maybeSingle();
+    const complete = Boolean(
+      profile?.display_name?.trim() &&
+        profile?.height_in != null &&
+        profile?.position &&
+        profile?.dominant_hand &&
+        profile?.primary_skill,
+    );
+
+    if (isAuthRoute) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = complete ? "/dashboard" : "/setup";
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    if (path.startsWith("/dashboard") && !complete) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/setup";
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    if (path.startsWith("/setup") && complete) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/dashboard";
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   return supabaseResponse;

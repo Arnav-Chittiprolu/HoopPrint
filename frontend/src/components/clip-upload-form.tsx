@@ -1,12 +1,20 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   uploadClip,
   type ClipType,
   type SourceType,
 } from "@/lib/api";
+
+const CLIP_TYPE_HINTS: Record<ClipType, string> = {
+  shot: "Catch-and-shoot or pull-up off the bounce. Form shooting is mechanics only.",
+  pass: "Clear pass-like arm release. About 5 usable clips total unlocks a named comparison.",
+  drive: "First step toward the rim. About 5 usable clips total unlocks a named comparison.",
+};
+
+const TYPES: ClipType[] = ["shot", "pass", "drive"];
 
 export function ClipUploadForm() {
   const router = useRouter();
@@ -17,6 +25,24 @@ export function ClipUploadForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  function takeFile(next: File | null) {
+    if (!next) return;
+    if (next.size > 50 * 1024 * 1024) {
+      setError("File exceeds 50MB limit");
+      return;
+    }
+    setFile(next);
+    setError(null);
+    setSuccess(null);
+  }
+
+  function onDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragOver(false);
+    takeFile(event.dataTransfer.files?.[0] ?? null);
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -48,46 +74,84 @@ export function ClipUploadForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium text-zinc-800">Clip file</span>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,video/quicktime,.mp4,.mov"
-            required
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-sm text-zinc-700 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-zinc-800 hover:file:bg-zinc-200"
+        <p className="text-sm font-medium text-zinc-800">Clip type</p>
+        <div className="mt-1.5 grid grid-cols-3 rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
+          {TYPES.map((type) => {
+            const selected = clipType === type;
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setClipType(type)}
+                className={`rounded-md px-2 py-1.5 text-sm font-medium capitalize transition-colors duration-200 ${
+                  selected
+                    ? "bg-white text-zinc-900 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
+                aria-pressed={selected}
+              >
+                {type}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-1.5 text-xs leading-5 text-zinc-500">{CLIP_TYPE_HINTS[clipType]}</p>
+      </div>
+
+      <label
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-4 py-6 text-center transition-colors duration-200 ${
+          dragOver
+            ? "border-orange-700 bg-orange-50/60"
+            : "border-zinc-300 bg-zinc-50/70 hover:border-zinc-400 hover:bg-zinc-50"
+        }`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="video/mp4,video/quicktime,.mp4,.mov"
+          required
+          onChange={(e) => takeFile(e.target.files?.[0] ?? null)}
+          className="sr-only"
+        />
+        <svg
+          viewBox="0 0 24 24"
+          className="size-8 text-zinc-400"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3 15.5V17a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-1.5M16 8l-4-4m0 0L8 8m4-4v12"
           />
-        </label>
-        <p className="mt-1 text-xs text-zinc-500">mp4 or mov, max ~25 seconds, 50MB</p>
-      </div>
+        </svg>
+        <p className="mt-2 text-sm font-medium text-zinc-800">
+          {file ? file.name : "Drop a clip here"}
+        </p>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          {file ? `${Math.round(file.size / (1024 * 1024))} MB · mp4 or mov` : "or click to browse · mp4 / mov · 50MB"}
+        </p>
+      </label>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium text-zinc-800">Source</span>
-          <select
-            value={sourceType}
-            onChange={(e) => setSourceType(e.target.value as SourceType)}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none ring-orange-600 focus:ring-2"
-          >
-            <option value="individual">Individual drill (solo)</option>
-            <option value="gameplay">Gameplay (multi-player)</option>
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium text-zinc-800">Clip type</span>
-          <select
-            value={clipType}
-            onChange={(e) => setClipType(e.target.value as ClipType)}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 outline-none ring-orange-600 focus:ring-2"
-          >
-            <option value="shot">Shot</option>
-            <option value="pass">Pass</option>
-            <option value="drive">Drive</option>
-          </select>
-        </label>
-      </div>
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="font-medium text-zinc-800">Source</span>
+        <select
+          value={sourceType}
+          onChange={(e) => setSourceType(e.target.value as SourceType)}
+          className="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm outline-none ring-orange-600 transition-shadow duration-200 focus:ring-2"
+        >
+          <option value="individual">Individual drill (solo)</option>
+          <option value="gameplay">Gameplay (multi-player)</option>
+        </select>
+      </label>
 
       {error ? (
         <p className="text-sm text-red-600" role="alert">
@@ -103,7 +167,7 @@ export function ClipUploadForm() {
       <button
         type="submit"
         disabled={loading}
-        className="min-h-10 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+        className="min-h-10 w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-60"
       >
         {loading ? "Uploading…" : "Upload clip"}
       </button>

@@ -34,6 +34,7 @@ async def extract_pose_isolated(
     source: str,
     suffix: str,
     bbox: tuple[float, float, float, float] | None = None,
+    start_s: float = 0.0,
     timeout_s: float = POSE_JOB_TIMEOUT_S,
 ) -> list[FrameKeypoints]:
     out_path = Path(video_path).with_suffix(".pose.json")
@@ -52,6 +53,8 @@ async def extract_pose_isolated(
     ]
     if bbox is not None:
         cmd.extend(["--bbox", ",".join(str(v) for v in bbox)])
+        if start_s > 0:
+            cmd.extend(["--start-s", str(start_s)])
 
     env = os.environ.copy()
     env["MEDIAPIPE_DISABLE_GPU"] = "1"

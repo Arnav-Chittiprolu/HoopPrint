@@ -7,8 +7,16 @@ from typing import Any
 
 from app.models.role_profile import EvidenceTier
 from app.services.role_profile.aggregate import aggregate_role_profile
-from app.services.role_profile.constants import BOOTSTRAP_RANK_ITERATIONS, TOP3_OVERLAP_MIN
-from app.services.role_profile.score import build_role_vector, rank_role_matches
+from app.services.role_profile.constants import (
+    BOOTSTRAP_RANK_ITERATIONS,
+    MIN_ACTIVE_DIMS_FOR_NAMED,
+    TOP3_OVERLAP_MIN,
+)
+from app.services.role_profile.score import (
+    build_role_vector,
+    rank_role_matches,
+    split_role_matches,
+)
 
 
 def decide_named_matches(
@@ -24,12 +32,15 @@ def decide_named_matches(
     tier = evidence_tier.value if isinstance(evidence_tier, EvidenceTier) else str(evidence_tier)
     if tier not in {EvidenceTier.established.value, EvidenceTier.strong.value}:
         return False, "evidence_tier"
-    if active_dimension_count < 2 or vector_dim_count < 2:
+    if active_dimension_count < MIN_ACTIVE_DIMS_FOR_NAMED or vector_dim_count < MIN_ACTIVE_DIMS_FOR_NAMED:
         return False, "active_dimensions"
-    if not overall_stable:
-        return False, "stability"
-    if top3_overlap_rate is not None and top3_overlap_rate < TOP3_OVERLAP_MIN:
-        return False, "top3_overlap"
+    # Stability / top-3 overlap only gate Strong profiles. Established (5 valid
+    # events) is allowed to show names as an early role resemblance.
+    if tier == EvidenceTier.strong.value:
+        if not overall_stable:
+            return False, "stability"
+        if top3_overlap_rate is not None and top3_overlap_rate < TOP3_OVERLAP_MIN:
+            return False, "top3_overlap"
     if not pool_named_allowed:
         return False, "pool_size"
     return True, None
@@ -47,7 +58,8 @@ def bootstrap_top3_overlap(
     user_id: str,
     players: list[dict],
     user_height_in: float,
-    height_band_in: float,
+    height_band_in: float | None = None,
+    listed_position: str | None = None,
     base_names: list[str],
     user_q: dict[str, float] | None = None,
     n_iter: int = BOOTSTRAP_RANK_ITERATIONS,
@@ -69,10 +81,12 @@ def bootstrap_top3_overlap(
             user_vector=vector,
             user_q=user_q,
             user_height_in=user_height_in,
+            listed_position=listed_position,
             height_band_in=height_band_in,
-            top_k=3,
+            top_k=None,
         )
-        names = {row["name"] for row in ranked if row.get("name")}
+        primary, _ = split_role_matches(ranked, primary_k=3, style_k=0)
+        names = {row["name"] for row in primary if row.get("name")}
         hits += len(names & set(base_names)) / max(len(base_names), 1)
         scored += 1
     if scored == 0:

@@ -1,7 +1,8 @@
 """Single-object tracking for gameplay clips (CSRT, with a template fallback).
 
-Never invent a second person. If the box is lost for several frames, skip
-those frames instead of guessing.
+Never invent a second person. If the box jumps to someone else, keep the last
+good box and keep running pose there through a brief loss (a pass/jumper often
+breaks CSRT for a few frames).
 """
 
 from __future__ import annotations
@@ -12,12 +13,12 @@ from typing import Callable, Protocol
 import cv2
 import numpy as np
 
-LOST_SKIP_FRAMES = 5
+LOST_SKIP_FRAMES = 90
 MIN_BOX_SIDE_PX = 12
 MIN_BOX_AREA_FRAC = 0.004
 SEARCH_PAD = 1.8
-POSE_CROP_PAD = 0.10
-POSE_KEEP_PAD = 0.08
+POSE_CROP_PAD = 0.50
+POSE_KEEP_PAD = 0.45
 MAX_CENTER_SHIFT_FRAC = 0.55
 MAX_BOX_SCALE_CHANGE = 2.2
 MIN_CORE_IN_BOX = 0.4

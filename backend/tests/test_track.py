@@ -66,8 +66,8 @@ def test_remap_landmarks_from_letterboxed_crop():
 
 def test_should_skip_pose_after_consecutive_losses():
     assert should_skip_pose(0) is False
-    assert should_skip_pose(4) is False
-    assert should_skip_pose(5) is True
+    assert should_skip_pose(89) is False
+    assert should_skip_pose(90) is True
 
 
 class _VoidInitTracker:
@@ -121,6 +121,29 @@ def test_template_tracker_follows_moving_square():
         xs.append(box[0])
     assert xs[-1] > xs[0]
     assert xs[-1] == pytest.approx(20 + 7 * 8, abs=4)
+
+
+def test_extract_frame_jpeg_at_later_second():
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
+        writer = cv2.VideoWriter(
+            tmp.name,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            8.0,
+            (80, 60),
+        )
+        for i in range(16):
+            frame = np.full((60, 80, 3), 40, dtype=np.uint8)
+            frame[:] = (0, 0, 20 + i * 10)
+            writer.write(frame)
+        writer.release()
+        tmp.flush()
+        with open(tmp.name, "rb") as handle:
+            video = handle.read()
+    from app.services.pose_extraction import extract_frame_jpeg
+
+    jpeg, duration = extract_frame_jpeg(video, at_s=1.0)
+    assert jpeg[:2] == b"\xff\xd8"
+    assert duration == pytest.approx(2.0, abs=0.3)
 
 
 def test_extract_first_frame_jpeg():

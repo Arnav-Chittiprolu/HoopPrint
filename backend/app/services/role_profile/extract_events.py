@@ -10,7 +10,10 @@ from app.models.role_profile import ClipEventRecord, RoleDimension
 from app.services.features.geometry import parse_frames
 from app.services.features.heuristics import find_pass_release_index
 from app.services.pose_job import FrameKeypoints
-from app.services.role_profile.constants import BURST_WINDOW_MS_DEFAULT
+from app.services.role_profile.constants import (
+    BURST_WINDOW_MS_DEFAULT,
+    MIN_POSE_SAMPLES_FOR_PASS,
+)
 from app.services.role_profile.gates import (
     find_pass_release_peaks,
     gate_catch_readiness,
@@ -127,6 +130,26 @@ def extract_clip_events(
         ]
 
     if kind == ClipType.pass_clip.value:
+        if len(parsed) < MIN_POSE_SAMPLES_FOR_PASS:
+            return [
+                ClipEventRecord(
+                    clip_id=_as_uuid(clip_id),
+                    user_id=_as_uuid(user_id),
+                    role_dimension=RoleDimension.playmaking,
+                    event_index=0,
+                    gate_passed=False,
+                    rejection_reason="sparse_track",
+                    signal_values={},
+                    quality={
+                        "mean_track_confidence": mean_track,
+                        "clip_type": kind,
+                        "pose_sample_count": len(parsed),
+                    },
+                    fps=video_fps,
+                    event_confidence=None,
+                    session_date=session,
+                )
+            ]
         peaks = find_pass_release_peaks(parsed, dominant_hand)
         if not peaks:
             release_idx = find_pass_release_index(parsed, dominant_hand)

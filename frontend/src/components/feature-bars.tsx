@@ -19,7 +19,7 @@ export function FeatureBar({
       </div>
       <div className="mt-1 h-2 overflow-hidden rounded-full bg-zinc-100">
         <div
-          className="h-full rounded-full bg-orange-600"
+          className="h-full rounded-full bg-orange-600 transition-[width] duration-300"
           style={{ width: `${pct}%` }}
         />
       </div>

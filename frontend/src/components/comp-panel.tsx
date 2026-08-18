@@ -10,38 +10,75 @@ import {
 } from "@/lib/api";
 import { STYLE_LABELS, formatHeightIn } from "@/lib/features";
 import { SlotCompareBar } from "@/components/feature-bars";
+import { Initials, SectionLabel } from "@/components/app-header";
+
+function evidenceBadge(tier: string | null | undefined) {
+  const label = tier || "Building";
+  const established = /establish/i.test(label);
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+        established ? "bg-emerald-50 text-emerald-800" : "bg-zinc-100 text-zinc-600"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
 
 function Proximity({ match }: { match: CompMatch }) {
   const band = match.resemblance_band ?? match.why?.score_terms?.resemblance_band ?? "—";
   const confidence = match.match_confidence;
   return (
     <div className="text-right">
-      <p className="text-sm font-medium text-zinc-900">Role-profile proximity: {band}</p>
+      <p className="text-sm font-medium text-zinc-900">{band}</p>
       {confidence != null ? (
-        <p className="mt-0.5 text-xs text-zinc-500">Match confidence: {confidence}/100</p>
+        <p className="mt-0.5 text-xs text-zinc-500">Match confidence {confidence}/100</p>
       ) : null}
     </div>
   );
 }
 
-function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }) {
+function MatchCard({
+  match,
+  featured,
+  styleOnly,
+}: {
+  match: CompMatch;
+  featured?: boolean;
+  styleOnly?: boolean;
+}) {
   const why = match.why;
-  const groups = why?.filter?.position_groups;
+  const mismatch = styleOnly || match.body_mismatch || match.comp_bucket === "style_only";
   return (
     <article
-      className={`rounded-lg border p-4 ${
-        featured ? "border-orange-200 bg-orange-50/40" : "border-zinc-200 bg-zinc-50/50"
+      className={`rounded-xl border p-4 transition-colors duration-200 ${
+        featured
+          ? "border-orange-200 bg-orange-50/50"
+          : mismatch
+            ? "border-sky-100 bg-sky-50/40"
+            : "border-zinc-200 bg-white"
       }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-base font-semibold text-zinc-900">{match.name}</p>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            {match.position ?? "NBA"}
-            {match.height_in != null ? ` · ${formatHeightIn(match.height_in)}` : ""}
-            {match.season ? ` · ${match.season}` : ""}
-            {featured ? " · role resemblance" : ""}
-          </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <Initials name={match.name} />
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-zinc-900">{match.name}</p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              {match.position ?? "NBA"}
+              {match.height_in != null ? ` · ${formatHeightIn(match.height_in)}` : ""}
+              {match.season ? ` · ${match.season}` : ""}
+            </p>
+            {mismatch ? (
+              <p className="mt-1 text-[11px] font-medium text-sky-800">
+                style similarity · body mismatch
+                {match.height_delta_in != null ? ` · ${match.height_delta_in}" gap` : ""}
+              </p>
+            ) : featured ? (
+              <p className="mt-1 text-[11px] font-medium text-orange-800">primary role resemblance</p>
+            ) : null}
+          </div>
         </div>
         <Proximity match={match} />
       </div>
@@ -50,25 +87,15 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
         <div className="mt-4 space-y-3">
           <div>
             <h3 className="text-sm font-medium text-zinc-800">Why this resemblance</h3>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
               {why.note ??
                 "Public-stat role resemblance — not shared mechanics, skill, or performance."}
             </p>
-            {why.filter ? (
+            {why.filter?.user_height_in != null && why.filter.nba_height_in != null ? (
               <p className="mt-2 text-sm text-zinc-700">
-                Comparison pool
-                {groups?.length ? ` (${groups.join(", ")})` : why.filter.position ? ` (${why.filter.position})` : ""}
-                {why.filter.band_in != null ? ` within ±${why.filter.band_in}"` : ""}
-                {why.filter.user_height_in != null && why.filter.nba_height_in != null
-                  ? ` (you ${formatHeightIn(why.filter.user_height_in)}, them ${formatHeightIn(why.filter.nba_height_in)})`
-                  : ""}
-                .
-              </p>
-            ) : null}
-            {why.score_terms ? (
-              <p className="mt-1 font-mono text-[11px] text-zinc-500">
-                distance {why.score_terms.distance ?? "—"} · height tie-break{" "}
-                {why.score_terms.height_tiebreak ?? "—"}
+                You {formatHeightIn(why.filter.user_height_in)}, them{" "}
+                {formatHeightIn(why.filter.nba_height_in)}
+                {why.filter.height_delta_in != null ? ` (${why.filter.height_delta_in}" apart)` : ""}.
               </p>
             ) : null}
           </div>
@@ -96,24 +123,32 @@ function MatchCard({ match, featured }: { match: CompMatch; featured?: boolean }
   );
 }
 
+function suppressionCopy(comp: CompResult): string {
+  const counted = comp.valid_event_count;
+  const countedBit =
+    counted != null ? ` ${counted} quality-checked clip${counted === 1 ? "" : "s"} counted so far.` : "";
+  switch (comp.suppression_reason) {
+    case "evidence_tier":
+      return `Named NBA examples need 5 clips that pass the action check.${countedBit} Form shooting, missing catches, or clips that start/end on the action do not count.`;
+    case "pool_size":
+      return "No NBA players are within 9 inches of your listed height, so named examples are omitted.";
+    case "active_dimensions":
+      return "Need at least one role dimension with enough valid events.";
+    default:
+      return "Named NBA examples are withheld until evidence is Established. The archetype above is the current role-level summary.";
+  }
+}
+
 function RecsBlock({ title, recs }: { title: string; recs: Recommendation[] }) {
   if (!recs.length) return null;
   return (
-    <div>
+    <div className="hp-card p-5">
       <h3 className="text-sm font-medium text-zinc-800">{title}</h3>
-      <ol className="mt-2 list-decimal space-y-3 pl-5 text-sm text-zinc-800">
+      <ol className="mt-3 list-decimal space-y-3 pl-5 text-sm text-zinc-800">
         {recs.map((rec, index) => (
           <li key={`${rec.target}-${index}`}>
             <p className="font-medium">{rec.action}</p>
             <p className="mt-0.5 text-xs text-zinc-500">{rec.because}</p>
-            {rec.current_value != null || rec.reference != null ? (
-              <p className="mt-1 font-mono text-[11px] text-zinc-500">
-                {rec.target}
-                {rec.current_value != null ? ` · you ${rec.current_value.toFixed(2)}` : ""}
-                {rec.reference != null ? ` · ref ${rec.reference.toFixed(2)}` : ""}
-                {rec.clip_count != null ? ` · n=${rec.clip_count}` : ""}
-              </p>
-            ) : null}
           </li>
         ))}
       </ol>
@@ -124,7 +159,7 @@ function RecsBlock({ title, recs }: { title: string; recs: Recommendation[] }) {
 function SummaryBlock({ summary }: { summary: string | null }) {
   if (!summary) return null;
   return (
-    <div>
+    <div className="hp-card p-5">
       <h3 className="text-sm font-medium text-zinc-800">Writeup</h3>
       <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-zinc-700">
         {summary}
@@ -183,99 +218,146 @@ export function CompPanel({ profileReady }: { profileReady: boolean }) {
   const fallbackRecs = !mechanicsRecs.length && !roleRecs.length ? (comp?.recommendations ?? []) : [];
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5">
-      <h2 className="text-lg font-medium text-zinc-900">NBA role resemblances</h2>
-      <p className="mt-1 text-sm text-zinc-600">
-        Similar public role-stat profiles within your comparison pool. Not shared mechanics, skill,
-        or performance.
-      </p>
+    <div className="grid gap-5 lg:grid-cols-3">
+      <div className="space-y-5 lg:col-span-2">
+        <section className="hp-card p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <SectionLabel>Playing-style profile</SectionLabel>
+              <p className="mt-2 text-sm text-zinc-600">
+                Built from quality-checked events. Role tendencies, not skill level or outcomes.
+              </p>
+            </div>
+            {evidenceBadge(comp?.evidence_tier)}
+          </div>
+          {loading ? <p className="mt-4 text-sm text-zinc-500">Loading…</p> : null}
+          {comp ? (
+            <div className="mt-4">
+              {archetype?.shown && archetype.label ? (
+                <p className="text-lg font-semibold text-zinc-900">{archetype.label}</p>
+              ) : (
+                <p className="text-sm text-zinc-600">Keep building your profile.</p>
+              )}
+              <p className="mt-2 text-xs leading-5 text-zinc-500">
+                {comp.active_dimensions?.length
+                  ? `Active: ${comp.active_dimensions.join(", ")}`
+                  : ""}
+                {comp.excluded_dimensions?.length
+                  ? ` · excluded: ${comp.excluded_dimensions.join(", ")}`
+                  : ""}
+                {comp.pool_confidence === "limited" ? " · small comparison set" : ""}
+              </p>
+            </div>
+          ) : null}
+        </section>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <section className="hp-card p-5">
+          <SectionLabel>Physical context</SectionLabel>
+          <p className="mt-3 text-sm leading-6 text-zinc-700">
+            {comp?.physical_context ||
+              comp?.pool_sentence ||
+              "Height shapes which NBA bodies are realistic primary comps, not how you play."}
+          </p>
+        </section>
+
+        {error ? (
+          <p className="text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {comp?.stale ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Height, position, or clips changed since this comparison. Re-run to update named
+            examples.
+          </p>
+        ) : null}
+
+        {comp ? (
+          <>
+            {comp.named_matches_suppressed || (!top && !(comp.style_only?.length)) ? (
+              <section className="hp-card p-5">
+                <p className="text-sm text-zinc-600">{suppressionCopy(comp)}</p>
+              </section>
+            ) : (
+              <>
+                {top ? (
+                  <section className="space-y-3">
+                    <div>
+                      <h2 className="text-sm font-semibold text-zinc-900">Primary NBA role comps</h2>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        Style and body profile are both plausible.
+                        {comp.pool_confidence === "limited"
+                          ? " Few body-plausible names — treat with lower confidence."
+                          : ""}
+                      </p>
+                    </div>
+                    <MatchCard match={top} featured />
+                    {comp.overall.slice(1).map((match) => (
+                      <MatchCard key={match.player_id ?? match.name} match={match} />
+                    ))}
+                  </section>
+                ) : (
+                  <section className="hp-card p-5">
+                    <p className="text-sm text-zinc-600">
+                      No body-plausible primary comps. Style-only references below are for learning,
+                      not &quot;you are this player.&quot;
+                    </p>
+                  </section>
+                )}
+                {comp.style_only?.length ? (
+                  <section className="space-y-3">
+                    <div>
+                      <h2 className="text-sm font-semibold text-zinc-900">Style-only references</h2>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        Similar tendencies with a major size mismatch. For learning, not a primary
+                        comparison.
+                      </p>
+                    </div>
+                    {comp.style_only.map((match) => (
+                      <MatchCard key={match.player_id ?? match.name} match={match} styleOnly />
+                    ))}
+                  </section>
+                ) : null}
+              </>
+            )}
+            <RecsBlock title="Mechanics next steps" recs={mechanicsRecs} />
+            <RecsBlock title="Role-profile next steps" recs={roleRecs} />
+            <RecsBlock title="Personalized next steps" recs={fallbackRecs} />
+            <SummaryBlock summary={comp.summary} />
+          </>
+        ) : !loading && profileReady ? (
+          <section className="hp-card p-5">
+            <p className="text-sm text-zinc-600">
+              Process quality-checked clips, then run a comparison to see an archetype or named
+              role resemblance.
+            </p>
+          </section>
+        ) : null}
+      </div>
+
+      <aside className="hp-card h-fit p-5 lg:sticky lg:top-20">
+        <SectionLabel>Run settings</SectionLabel>
+        <p className="mt-3 text-sm leading-6 text-zinc-600">
+          Role resemblance is 72% of rank. Height is body plausibility, not a style slot. Named
+          names need Established evidence.
+        </p>
         <button
           type="button"
           onClick={onRun}
           disabled={pending || !profileReady}
-          className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+          className="mt-5 w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-zinc-800 disabled:opacity-60"
         >
-          {pending ? "Comparing…" : comp ? "Re-run role comparison" : "Run role comparison"}
+          {pending ? "Comparing…" : comp ? "Re-run comparison" : "Run comparison"}
         </button>
         {!profileReady ? (
-          <p className="text-xs text-amber-700">Save height and position in Your profile first.</p>
+          <p className="mt-3 text-xs text-amber-700">Save height and position on Clips first.</p>
         ) : (
-          <p className="text-xs text-zinc-500">
-            Named NBA examples need Established evidence on at least two role dimensions.
+          <p className="mt-3 text-xs leading-5 text-zinc-500">
+            Named NBA examples need about 5 quality-checked clips (Established).
           </p>
         )}
-      </div>
-
-      {loading ? <p className="mt-4 text-sm text-zinc-500">Loading…</p> : null}
-      {error ? (
-        <p className="mt-4 text-sm text-red-600" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {comp ? (
-        <div className="mt-5 space-y-5 border-t border-zinc-100 pt-5">
-          <div>
-            <h3 className="text-sm font-medium text-zinc-800">Your playing-style profile</h3>
-            <p className="mt-1 text-xs text-zinc-500">
-              Built from quality-checked events. Describes role tendencies, not skill level or
-              outcomes.
-            </p>
-            <p className="mt-2 text-xs text-zinc-600">
-              Evidence strength: {comp.evidence_tier ?? "—"}
-              {comp.active_dimensions?.length
-                ? ` · active: ${comp.active_dimensions.join(", ")}`
-                : ""}
-              {comp.excluded_dimensions?.length
-                ? ` · excluded: ${comp.excluded_dimensions.join(", ")}`
-                : ""}
-            </p>
-            {archetype?.shown && archetype.label ? (
-              <p className="mt-2 text-sm text-zinc-800">
-                Archetype: <span className="font-medium">{archetype.label}</span>
-              </p>
-            ) : (
-              <p className="mt-2 text-sm text-zinc-600">Keep building your profile.</p>
-            )}
-            {comp.pool_sentence ? (
-              <p className="mt-2 text-sm text-zinc-700">{comp.pool_sentence}</p>
-            ) : (
-              <p className="mt-2 text-xs uppercase tracking-wide text-zinc-500">
-                {comp.season} · pool {comp.pool_size}
-              </p>
-            )}
-          </div>
-          {comp.named_matches_suppressed || !top ? (
-            <p className="text-sm text-zinc-600">
-              Named NBA examples are withheld until evidence is Established and stable. The
-              archetype above is the current role-level summary.
-            </p>
-          ) : (
-            <>
-              <MatchCard match={top} featured />
-              {comp.overall.slice(1).length ? (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-zinc-800">Also close</h3>
-                  {comp.overall.slice(1).map((match) => (
-                    <MatchCard key={match.player_id ?? match.name} match={match} />
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
-          <RecsBlock title="Mechanics next steps" recs={mechanicsRecs} />
-          <RecsBlock title="Role-profile next steps" recs={roleRecs} />
-          <RecsBlock title="Personalized next steps" recs={fallbackRecs} />
-          <SummaryBlock summary={comp.summary} />
-        </div>
-      ) : !loading && profileReady ? (
-        <p className="mt-4 text-sm text-zinc-600">
-          Process quality-checked clips, then run a comparison to see an archetype or named role
-          resemblance.
-        </p>
-      ) : null}
+      </aside>
     </div>
   );
 }

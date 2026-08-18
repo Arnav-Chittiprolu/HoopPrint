@@ -134,6 +134,34 @@ export async function listClips(): Promise<Clip[]> {
   return res.json();
 }
 
+export async function deleteAllClips(): Promise<{ deleted: number }> {
+  const res = await apiFetch("/clips", { method: "DELETE" }, 60_000);
+  if (!res.ok) {
+    let message = `Failed to delete clips (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function deleteClip(clipId: string): Promise<{ deleted: string }> {
+  const res = await apiFetch(`/clips/${clipId}`, { method: "DELETE" }, 60_000);
+  if (!res.ok) {
+    let message = `Failed to delete clip (${res.status})`;
+    try {
+      message = parseApiError(await res.json(), message);
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
 export async function processClip(clipId: string): Promise<{
   clip_id: string;
   status: ClipStatus;
@@ -177,10 +205,13 @@ export async function updateClipType(clipId: string, clipType: ClipType): Promis
   return res.json();
 }
 
-export async function getClipFirstFrameUrl(clipId: string): Promise<string> {
-  const res = await apiFetch(`/clips/${clipId}/first-frame`, {}, 60_000);
+export async function getClipFrame(
+  clipId: string,
+  atS = 0,
+): Promise<{ url: string; durationS: number | null }> {
+  const res = await apiFetch(`/clips/${clipId}/first-frame?t=${encodeURIComponent(String(atS))}`, {}, 60_000);
   if (!res.ok) {
-    let message = `Failed to load first frame (${res.status})`;
+    let message = `Failed to load frame (${res.status})`;
     try {
       message = parseApiError(await res.json(), message);
     } catch {
@@ -188,13 +219,23 @@ export async function getClipFirstFrameUrl(clipId: string): Promise<string> {
     }
     throw new Error(message);
   }
+  const durationHeader = res.headers.get("X-Video-Duration");
+  const durationS = durationHeader != null ? Number(durationHeader) : null;
   const blob = await res.blob();
-  return URL.createObjectURL(blob);
+  return {
+    url: URL.createObjectURL(blob),
+    durationS: Number.isFinite(durationS) ? durationS : null,
+  };
+}
+
+export async function getClipFirstFrameUrl(clipId: string): Promise<string> {
+  const frame = await getClipFrame(clipId, 0);
+  return frame.url;
 }
 
 export async function saveClipBbox(
   clipId: string,
-  box: { x: number; y: number; w: number; h: number },
+  box: { x: number; y: number; w: number; h: number; start_s?: number },
 ): Promise<{ status: ClipStatus }> {
   const res = await apiFetch(`/clips/${clipId}/bbox`, {
     method: "POST",
@@ -220,6 +261,22 @@ export interface ClipFeature {
   value: number;
   meta: Record<string, unknown>;
   created_at: string;
+}
+
+export async function listClipEvents(clipId: string): Promise<
+  Array<{
+    clip_id: string;
+    role_dimension: string;
+    gate_passed: boolean;
+    rejection_reason: string | null;
+    event_confidence: number | null;
+  }>
+> {
+  const res = await apiFetch(`/clips/${clipId}/events`);
+  if (!res.ok) {
+    return [];
+  }
+  return res.json();
 }
 
 export async function listClipFeatures(clipId: string): Promise<ClipFeature[]> {
@@ -345,29 +402,37 @@ export interface CompMatch {
   style_vector: Record<string, number>;
   role_vector?: Record<string, number>;
   kind: string;
-  resemblance_band?: string | null;
-  match_confidence?: number | null;
-  why?: {
-    label?: string;
-    filter?: {
-      position?: string | null;
-      position_groups?: string[];
-      user_height_in?: number;
-      nba_height_in?: number | null;
-      height_z_nba?: number | null;
-      band_in?: number;
-      height_delta_in?: number | null;
-      stage?: number;
-    };
-    score_terms?: {
-      cosine?: number | null;
-      distance?: number | null;
-      height_tiebreak?: number | null;
-      resemblance_band?: string | null;
-      total?: number | null;
-      user_scale?: string;
-      nba_scale?: string;
-    };
+    resemblance_band?: string | null;
+    match_confidence?: number | null;
+    comp_bucket?: string | null;
+    body_mismatch?: boolean | null;
+    body_plausibility?: number | null;
+    height_delta_in?: number | null;
+    why?: {
+      label?: string;
+      filter?: {
+        position?: string | null;
+        position_groups?: string[];
+        user_height_in?: number;
+        nba_height_in?: number | null;
+        height_z_nba?: number | null;
+        band_in?: number;
+        height_delta_in?: number | null;
+        stage?: number;
+      };
+      score_terms?: {
+        cosine?: number | null;
+        distance?: number | null;
+        height_tiebreak?: number | null;
+        body_plausibility?: number | null;
+        combined_score?: number | null;
+        resemblance_band?: string | null;
+        comp_bucket?: string | null;
+        body_mismatch?: boolean | null;
+        total?: number | null;
+        user_scale?: string;
+        nba_scale?: string;
+      };
     slots?: Array<{ dim: string; user: number; nba: number; gap: number }>;
     omitted_slots?: string[];
     note?: string;
@@ -402,9 +467,12 @@ export interface CompResult {
   evidence_tier?: string | null;
   mechanics: Record<string, number>;
   overall: CompMatch[];
+  style_only?: CompMatch[];
   by_category: Partial<Record<"shot" | "pass" | "drive", CompMatch[]>>;
   pool_size: number;
   pool_sentence?: string | null;
+  physical_context?: string | null;
+  pool_confidence?: string | null;
   recommendations?: Recommendation[];
   mechanics_recs?: Recommendation[];
   role_recs?: Recommendation[];
@@ -418,8 +486,16 @@ export interface CompResult {
   suppression_reason?: string | null;
   active_dimensions?: string[];
   excluded_dimensions?: string[];
+  valid_event_count?: number | null;
   height_z_us?: number | null;
   height_z_nba?: number | null;
+  inputs_snapshot?: {
+    height_in?: number | null;
+    position?: string | null;
+    valid_event_count?: number | null;
+  };
+  stale?: boolean;
+  stale_reasons?: string[];
   summary: string | null;
 }
 

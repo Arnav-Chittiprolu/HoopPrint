@@ -30,8 +30,13 @@ from app.services.role_profile.constants import (
     CATCH_RELEASE_MIN_S,
     MIN_EVENT_CONFIDENCE_FOR_EMERGING,
     MIN_EVENT_CONFIDENCE_FOR_ESTABLISHED,
+    MIN_EVENTS_DIMENSION_EMERGING,
+    MIN_EVENTS_DIMENSION_ESTABLISHED,
+    MIN_EVENTS_OVERALL_ESTABLISHED,
+    MIN_EVENTS_OVERALL_STRONG,
     PLAYMAKING_EXTENSION_FLOOR_DEG,
     PLAYMAKING_EXTENSION_SPAN_DEG,
+    PULL_UP_LATENT,
     RIM_BURST_LATENT_SCALE,
     ROLE_PROFILE_VERSION,
     ROLE_VECTOR_KEYS,
@@ -121,14 +126,21 @@ def event_raw_signal(event: ClipEventRecord) -> float | None:
 
 def event_latent_score(event: ClipEventRecord) -> float | None:
     """Map a gated event onto ~[0, 1]. Higher = stronger tendency on that dimension."""
-    raw = event_raw_signal(event)
-    if raw is None:
-        return None
     if event.role_dimension == RoleDimension.catch_readiness:
+        origin = (event.signal_values or {}).get("shot_origin")
+        if origin == "pull_up":
+            return PULL_UP_LATENT
+        raw = event_raw_signal(event)
+        if raw is None:
+            return None
         span = CATCH_RELEASE_MAX_S - CATCH_RELEASE_MIN_S
         if span <= 0:
             return None
-        return _clamp01(1.0 - (raw - CATCH_RELEASE_MIN_S) / span)
+        timed = max(float(raw), CATCH_RELEASE_MIN_S)
+        return _clamp01(1.0 - (timed - CATCH_RELEASE_MIN_S) / span)
+    raw = event_raw_signal(event)
+    if raw is None:
+        return None
     if event.role_dimension == RoleDimension.rim_pressure:
         return _clamp01(raw / RIM_BURST_LATENT_SCALE)
     return _clamp01((raw - PLAYMAKING_EXTENSION_FLOOR_DEG) / PLAYMAKING_EXTENSION_SPAN_DEG)
@@ -212,21 +224,19 @@ def dimension_status(
     if event_count <= 0:
         return RoleDimensionStatus.not_observed
     if (
-        event_count >= 3
+        event_count >= MIN_EVENTS_DIMENSION_EMERGING
         and median_confidence is not None
         and median_confidence < MIN_EVENT_CONFIDENCE_FOR_EMERGING
     ):
         return RoleDimensionStatus.suppressed_low_quality
-    if event_count <= 2:
+    if event_count < MIN_EVENTS_DIMENSION_EMERGING:
         return RoleDimensionStatus.insufficient
     if (
-        event_count >= 5
-        and (session_count >= 2 or session_count == 0)
+        event_count >= MIN_EVENTS_DIMENSION_ESTABLISHED
         and (median_confidence is None or median_confidence >= MIN_EVENT_CONFIDENCE_FOR_ESTABLISHED)
-        and stable
     ):
         return RoleDimensionStatus.established
-    if event_count >= 3 and (
+    if event_count >= MIN_EVENTS_DIMENSION_EMERGING and (
         median_confidence is None or median_confidence >= MIN_EVENT_CONFIDENCE_FOR_EMERGING
     ):
         return RoleDimensionStatus.emerging
@@ -246,26 +256,13 @@ def overall_evidence_tier(
     if not active:
         return EvidenceTier.insufficient
 
-    best = max((states[d].status for d in active), key=lambda s: _STATUS_RANK[s])
-    total_events = sum(states[d].event_count for d in active)
-    max_events = max(states[d].event_count for d in active)
-    max_sessions = max(states[d].session_count for d in active)
+    total_events = sum(state.event_count for state in states.values())
 
-    if len(active) >= 2 and max_events >= 10 and max_sessions >= 2 and overall_stable:
+    if total_events >= MIN_EVENTS_OVERALL_STRONG and overall_stable:
         return EvidenceTier.strong
-    if (
-        best == RoleDimensionStatus.established
-        and len(active) >= 2
-        and overall_stable
-    ):
+    if total_events >= MIN_EVENTS_OVERALL_ESTABLISHED:
         return EvidenceTier.established
-    if best == RoleDimensionStatus.established and len(active) < 2:
-        return EvidenceTier.emerging
-    if total_events >= 10 and len(active) >= 2 and overall_stable:
-        return EvidenceTier.strong
-    if _STATUS_RANK[best] >= _STATUS_RANK[RoleDimensionStatus.emerging]:
-        return EvidenceTier.emerging
-    return EvidenceTier.insufficient
+    return EvidenceTier.emerging
 
 
 def _parse_event_row(row: dict[str, Any]) -> ClipEventRecord | None:
@@ -419,10 +416,9 @@ def aggregate_role_profile(
         for d in active
         if summaries.get(d.value)
     ]
-    overall_stable = (
-        len(active) >= 2
-        and all(states[d].event_count >= 5 for d in active)
-        and (all(dim_stable) if dim_stable else False)
+    total_valid = sum(s.event_count for s in states.values())
+    overall_stable = total_valid >= MIN_EVENTS_OVERALL_STRONG and (
+        all(dim_stable) if dim_stable else False
     )
     tier = overall_evidence_tier(states, overall_stable=overall_stable)
 

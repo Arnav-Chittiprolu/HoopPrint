@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.auth import CurrentUser, get_current_user
 from app.config import Settings, get_settings
 from app.models.comp import CompResultResponse
-from app.services.comp import CompError, comp_from_stored_row, run_role_comp
+from app.services.comp import CompError, apply_stale_flag, comp_from_stored_row, run_role_comp
 from app.services.supabase_client import SupabaseService
 
 router = APIRouter(prefix="/me", tags=["comp"])
@@ -54,4 +54,31 @@ async def get_comp(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No comp yet")
 
-    return CompResultResponse.model_validate(comp_from_stored_row(row))
+    result = comp_from_stored_row(row)
+    try:
+        profile = await supabase.get_profile(user.id)
+        role = await supabase.get_user_role_profile(user.id)
+    except Exception:
+        profile = None
+        role = None
+    height_in = None if not profile else profile.get("height_in")
+    position = None if not profile else profile.get("position")
+    try:
+        height_f = None if height_in is None else float(height_in)
+    except (TypeError, ValueError):
+        height_f = None
+    quality = (role or {}).get("quality_summary") or {}
+    event_count = quality.get("total_valid_events")
+    if event_count is None and role:
+        event_count = (
+            int(role.get("catch_readiness_event_count") or 0)
+            + int(role.get("rim_pressure_event_count") or 0)
+            + int(role.get("playmaking_event_count") or 0)
+        )
+    apply_stale_flag(
+        result,
+        height_in=height_f,
+        position=None if position is None else str(position),
+        valid_event_count=event_count,
+    )
+    return CompResultResponse.model_validate(result)

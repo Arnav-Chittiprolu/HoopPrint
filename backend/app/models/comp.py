@@ -21,6 +21,10 @@ class CompMatch(BaseModel):
     kind: str = "role_profile"
     resemblance_band: str | None = None
     match_confidence: int | None = None
+    comp_bucket: str | None = None
+    body_mismatch: bool | None = None
+    body_plausibility: float | None = None
+    height_delta_in: float | None = None
     why: dict[str, Any] | None = None
 
 
@@ -56,9 +60,12 @@ class CompResultResponse(BaseModel):
     evidence_tier: str | None = None
     mechanics: dict[str, float] = Field(default_factory=dict)
     overall: list[CompMatch] = Field(default_factory=list)
+    style_only: list[CompMatch] = Field(default_factory=list)
     by_category: dict[str, list[CompMatch]] = Field(default_factory=dict)
     pool_size: int = 0
     pool_sentence: str | None = None
+    physical_context: str | None = None
+    pool_confidence: str | None = None
     recommendations: list[Recommendation] = Field(default_factory=list)
     mechanics_recs: list[Recommendation] = Field(default_factory=list)
     role_recs: list[Recommendation] = Field(default_factory=list)
@@ -69,6 +76,10 @@ class CompResultResponse(BaseModel):
     excluded_dimensions: list[str] = Field(default_factory=list)
     height_z_us: float | None = None
     height_z_nba: float | None = None
+    valid_event_count: int | None = None
+    inputs_snapshot: dict[str, Any] = Field(default_factory=dict)
+    stale: bool = False
+    stale_reasons: list[str] = Field(default_factory=list)
     summary: str | None = None
 
 

@@ -58,7 +58,7 @@ export function MechanicsPanel() {
   }, [history]);
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5">
+    <div className="hp-card p-5">
       <h2 className="text-lg font-medium text-zinc-900">Mechanics</h2>
       <p className="mt-1 text-sm text-zinc-600">
         Pose measurements from your clips — release posture, elbow configuration, relative

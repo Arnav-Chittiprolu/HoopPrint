@@ -210,6 +210,18 @@ def extract_pose_keypoints_from_path(
 
 
 def extract_first_frame_jpeg(video_bytes: bytes, *, suffix: str = ".mp4", quality: int = 85) -> bytes:
+    jpeg, _duration = extract_frame_jpeg(video_bytes, at_s=0, suffix=suffix, quality=quality)
+    return jpeg
+
+
+def extract_frame_jpeg(
+    video_bytes: bytes,
+    *,
+    at_s: float = 0,
+    suffix: str = ".mp4",
+    quality: int = 85,
+) -> tuple[bytes, float]:
+    """Return (jpeg_bytes, duration_seconds) for the frame nearest at_s."""
     tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -218,17 +230,30 @@ def extract_first_frame_jpeg(video_bytes: bytes, *, suffix: str = ".mp4", qualit
             tmp_path = tmp.name
         capture = cv2.VideoCapture(tmp_path)
         if not capture.isOpened():
-            raise ValueError("Could not open video for first frame")
+            raise ValueError("Could not open video for frame extract")
         try:
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+            frame_count = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+            duration = (frame_count / fps) if fps > 1e-3 and frame_count > 0 else 0.0
+            if duration <= 0:
+                duration = max(0.0, float(at_s))
+            target_s = min(max(0.0, float(at_s)), max(0.0, duration - 1e-3) if duration > 0 else 0.0)
+            if fps > 1e-3:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, int(round(target_s * fps)))
+            else:
+                capture.set(cv2.CAP_PROP_POS_MSEC, target_s * 1000.0)
             ok, frame = capture.read()
+            if not ok or frame is None:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = capture.read()
         finally:
             capture.release()
         if not ok or frame is None:
-            raise ValueError("Could not read the first video frame")
+            raise ValueError("Could not read a video frame at that second")
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if not ok:
-            raise ValueError("Could not encode first frame as JPEG")
-        return encoded.tobytes()
+            raise ValueError("Could not encode frame as JPEG")
+        return encoded.tobytes(), duration
     finally:
         if tmp_path:
             try:
@@ -244,6 +269,7 @@ def extract_pose_keypoints_tracked(
     frame_step: int = FRAME_STEP,
     suffix: str = ".mp4",
     lost_skip: int = LOST_SKIP_FRAMES,
+    start_s: float = 0.0,
 ) -> list[FrameKeypoints]:
     """Track one bbox with CSRT (or template fallback), pose only on that crop."""
     tmp_path: str | None = None
@@ -257,6 +283,7 @@ def extract_pose_keypoints_tracked(
             bbox,
             frame_step=frame_step,
             lost_skip=lost_skip,
+            start_s=start_s,
         )
     finally:
         if tmp_path:
@@ -272,6 +299,7 @@ def extract_pose_keypoints_tracked_from_path(
     *,
     frame_step: int = FRAME_STEP,
     lost_skip: int = LOST_SKIP_FRAMES,
+    start_s: float = 0.0,
 ) -> list[FrameKeypoints]:
     """Track one bbox from an on-disk video (no extra RAM copy)."""
     if frame_step < 1:
@@ -290,7 +318,20 @@ def extract_pose_keypoints_tracked_from_path(
         ok, first = capture.read()
         if not ok or first is None:
             raise ValueError("Could not read the first video frame")
+
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        start_frame = 0
+        if start_s > 0 and fps > 1e-3:
+            start_frame = max(0, int(round(float(start_s) * fps)))
+        skipped = 0
+        while skipped < start_frame:
+            ok, nxt = capture.read()
+            if not ok or nxt is None:
+                break
+            first = nxt
+            skipped += 1
         first = scale_to_max_side(first)
+        frame_index = skipped
 
         height, width = first.shape[:2]
         pixel_box = bbox.to_pixels(width, height)
@@ -341,8 +382,8 @@ def extract_pose_keypoints_tracked_from_path(
             )
 
         try:
-            _maybe_pose(first, current_box, 0)
-            frame_index = 1
+            _maybe_pose(first, current_box, frame_index)
+            frame_index += 1
             while True:
                 ok, frame_bgr = capture.read()
                 if not ok:

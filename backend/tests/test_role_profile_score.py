@@ -16,7 +16,7 @@ from app.services.role_profile.aggregate import aggregate_role_profile
 from app.services.role_profile.archetype import classify_archetype
 from app.services.role_profile.constants import (
     BANNED_MECHANICS_KEYS,
-    HEIGHT_TIEBREAK_WEIGHT,
+    RANK_BODY_WEIGHT,
     ROLE_VECTOR_KEYS,
 )
 from app.services.role_profile.nba_transform import (
@@ -27,10 +27,13 @@ from app.services.role_profile.nba_transform import (
 from app.services.role_profile.pool import select_nba_pool
 from app.services.role_profile.recs import build_mechanics_recs, build_role_recs
 from app.services.role_profile.score import (
+    body_plausibility,
     build_role_vector,
+    classify_comp_bucket,
     height_tiebreak,
     masked_distance,
     rank_role_matches,
+    split_role_matches,
 )
 from app.services.role_profile.validate import assert_no_mechanics_keys
 
@@ -144,11 +147,11 @@ def test_named_matches_require_established_evidence():
 
     allowed_ok, reason_ok = decide_named_matches(
         evidence_tier=EvidenceTier.established,
-        active_dimension_count=2,
-        overall_stable=True,
-        top3_overlap_rate=1.0,
+        active_dimension_count=1,
+        overall_stable=False,
+        top3_overlap_rate=0.1,
         pool_named_allowed=True,
-        vector_dim_count=2,
+        vector_dim_count=1,
     )
     assert allowed_ok is True
     assert reason_ok is None
@@ -174,13 +177,57 @@ def test_missing_dimension_not_penalized_as_zero():
     assert dist < 0.05
 
 
+def test_named_rank_skips_players_missing_a_user_dimension():
+    user = {"catch_readiness": 0.18, "playmaking_orientation": 1.0}
+    players = [
+        {
+            "name": "Subset Only",
+            "player_id": 1,
+            "position": "forward",
+            "position_group": "forward",
+            "height_in": 79.0,
+            "role_vector": {"playmaking_orientation": 0.997},
+            "meets_min_sample": True,
+            "raw_source": {},
+        },
+        {
+            "name": "Full Coverage",
+            "player_id": 2,
+            "position": "guard",
+            "position_group": "guard",
+            "height_in": 78.0,
+            "role_vector": {"catch_readiness": 0.2, "playmaking_orientation": 0.95},
+            "meets_min_sample": True,
+            "raw_source": {},
+        },
+    ]
+    ranked = rank_role_matches(
+        players,
+        user_vector=user,
+        user_height_in=78.0,
+        listed_position="guard",
+        top_k=None,
+    )
+    names = [row["name"] for row in ranked]
+    assert "Subset Only" not in names
+    assert names[0] == "Full Coverage"
+
+
 def test_height_and_position_only_filter_or_tiebreak_not_primary_similarity():
     user = {"catch_readiness": 0.5, "rim_pressure_tendency": 0.5}
     nba = {"catch_readiness": 0.5, "rim_pressure_tendency": 0.5}
     dist = masked_distance(user, nba)
     tie = height_tiebreak(70.0, 75.0, band_in=5.0)
     assert dist == 0.0 or dist is not None and dist < 1e-9
-    assert 0 < tie <= HEIGHT_TIEBREAK_WEIGHT
+    assert 0 < tie <= RANK_BODY_WEIGHT
+    assert body_plausibility(2.0) == 1.0
+    assert body_plausibility(5.0) < body_plausibility(3.0)
+    assert body_plausibility(10.0) == 0.0
+    assert classify_comp_bucket(4.0, 1.2) == "primary"
+    assert classify_comp_bucket(6.0, 0.4) == "primary"
+    assert classify_comp_bucket(6.0, 1.2) == "style_only"
+    assert classify_comp_bucket(8.0, 0.2) == "style_only"
+    assert classify_comp_bucket(10.0, 0.1) is None
 
 
 def test_identical_role_vectors_rank_identically_regardless_of_mechanics():
@@ -225,7 +272,7 @@ def test_identical_role_vectors_rank_identically_regardless_of_mechanics():
     assert [r["ranking_distance"] for r in ranked] == [r["ranking_distance"] for r in ranked_again]
 
 
-def test_pool_below_minimum_suppresses_named_match():
+def test_small_pool_still_allows_named_with_limited_confidence():
     players = [
         {
             "name": f"G{i}",
@@ -238,8 +285,117 @@ def test_pool_below_minimum_suppresses_named_match():
         for i in range(3)
     ]
     pool = select_nba_pool(players, position="guard", height_in=74.0, min_pool=8)
-    assert pool.stage == 4
-    assert pool.named_matches_allowed is False
+    assert pool.named_matches_allowed is True
+    assert pool.pool_confidence == "limited"
+    assert len(pool.players) == 3
+
+
+def test_undersized_forward_still_gets_similar_height_guards():
+    players = [
+        {
+            "name": f"G{i}",
+            "position": "guard",
+            "position_group": "guard",
+            "height_in": 70.0,
+            "role_vector": {"catch_readiness": 0.5, "rim_pressure_tendency": 0.5},
+            "meets_min_sample": True,
+        }
+        for i in range(10)
+    ] + [
+        {
+            "name": "Tall Forward",
+            "position": "forward",
+            "position_group": "forward",
+            "height_in": 81.0,
+            "role_vector": {"catch_readiness": 0.5, "rim_pressure_tendency": 0.5},
+            "meets_min_sample": True,
+        }
+    ]
+    pool = select_nba_pool(players, position="forward", height_in=70.0, min_pool=8)
+    assert pool.named_matches_allowed is True
+    names = {p["name"] for p in pool.players}
+    assert "Tall Forward" not in names
+    assert len(pool.players) == 10
+
+
+def test_six_six_user_never_matches_wemby_height():
+    players = [
+        {
+            "name": f"W{i}",
+            "position": "wing",
+            "position_group": "wing",
+            "height_in": 78.0,
+            "role_vector": {"catch_readiness": 0.5},
+            "meets_min_sample": True,
+        }
+        for i in range(10)
+    ] + [
+        {
+            "name": "Victor Wembanyama",
+            "position": "forward",
+            "position_group": "forward",
+            "height_in": 88.0,
+            "role_vector": {"catch_readiness": 0.5, "rim_pressure_tendency": 0.9},
+            "meets_min_sample": True,
+        }
+    ]
+    for listed in ("wing", "forward", "center"):
+        pool = select_nba_pool(players, position=listed, height_in=78.0, min_pool=8)
+        assert all(abs(float(p["height_in"]) - 78.0) <= 9.0 for p in pool.players)
+        assert all(p["name"] != "Victor Wembanyama" for p in pool.players)
+
+
+def test_role_outranks_height_and_splits_style_only():
+    user = {"catch_readiness": 0.9, "rim_pressure_tendency": 0.9}
+    players = [
+        {
+            "name": "SameStyleTaller",
+            "player_id": 1,
+            "position": "forward",
+            "position_group": "forward",
+            "height_in": 86.0,
+            "role_vector": {"catch_readiness": 0.9, "rim_pressure_tendency": 0.9},
+            "meets_min_sample": True,
+            "raw_source": {},
+        },
+        {
+            "name": "DifferentStyleSameHeight",
+            "player_id": 2,
+            "position": "guard",
+            "position_group": "guard",
+            "height_in": 78.0,
+            "role_vector": {"catch_readiness": 0.05, "rim_pressure_tendency": 0.05},
+            "meets_min_sample": True,
+            "raw_source": {},
+        },
+        {
+            "name": "SameStyleClose",
+            "player_id": 3,
+            "position": "wing",
+            "position_group": "wing",
+            "height_in": 79.0,
+            "role_vector": {"catch_readiness": 0.9, "rim_pressure_tendency": 0.9},
+            "meets_min_sample": True,
+            "raw_source": {},
+        },
+    ]
+    ranked = rank_role_matches(
+        players,
+        user_vector=user,
+        user_height_in=78.0,
+        listed_position="wing",
+        top_k=None,
+    )
+    names = [row["name"] for row in ranked]
+    assert names[0] == "SameStyleClose"
+    by_name = {row["name"]: row for row in ranked}
+    assert by_name["SameStyleTaller"]["comp_bucket"] == "style_only"
+    assert by_name["SameStyleClose"]["comp_bucket"] == "primary"
+    assert by_name["SameStyleTaller"]["ranking_distance"] < by_name["DifferentStyleSameHeight"]["ranking_distance"]
+    primary, style_only = split_role_matches(ranked)
+    assert primary[0]["name"] == "SameStyleClose"
+    assert "DifferentStyleSameHeight" in [row["name"] for row in primary]
+    assert [row["name"] for row in style_only] == ["SameStyleTaller"]
 
 
 def test_nba_seed_requires_provenance_and_denominator():

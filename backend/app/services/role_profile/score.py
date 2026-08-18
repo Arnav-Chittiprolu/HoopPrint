@@ -7,7 +7,16 @@ from typing import Any, Iterable
 
 from app.models.role_profile import validate_role_vector_payload
 from app.services.role_profile.constants import (
-    HEIGHT_TIEBREAK_WEIGHT,
+    BODY_EXCEPTIONAL_IN,
+    BODY_EXCLUDE_IN,
+    BODY_NO_PENALTY_IN,
+    BODY_PRIMARY_MAX_IN,
+    BODY_SMALL_PENALTY_IN,
+    EXCEPTIONAL_ROLE_DISTANCE,
+    RANK_BODY_WEIGHT,
+    RANK_CONFIDENCE_WEIGHT,
+    RANK_LISTED_ROLE_WEIGHT,
+    RANK_ROLE_WEIGHT,
     ROLE_DIM_WEIGHTS,
     ROLE_VECTOR_KEYS,
     Z_CLIP,
@@ -87,6 +96,11 @@ def shared_dimensions(
     return [k for k in ROLE_VECTOR_KEYS if k in user and k in nba]
 
 
+def covers_user_dimensions(user: dict[str, float], nba: dict[str, float]) -> bool:
+    """Named ranking requires every user-active dim. Do not zero-fill gaps."""
+    return bool(user) and all(key in nba for key in user)
+
+
 def masked_distance(
     user: dict[str, float],
     nba: dict[str, float],
@@ -156,17 +170,99 @@ def dimension_contributions(
     return {"shared": parts, "omitted": omitted}
 
 
+ADJACENT_GROUPS: dict[str, tuple[str, ...]] = {
+    "guard": ("wing",),
+    "wing": ("guard", "forward"),
+    "forward": ("wing", "center"),
+    "center": ("forward",),
+}
+
+
+def height_delta_in(user_height_in: float, nba_height_in: float | None) -> float | None:
+    if nba_height_in is None:
+        return None
+    return abs(float(user_height_in) - float(nba_height_in))
+
+
+def body_plausibility(delta_in: float | None) -> float:
+    """1 = same size; 0 = at the named-comparison cutoff. None / >9" → 0."""
+    if delta_in is None:
+        return 0.0
+    d = abs(float(delta_in))
+    if d > BODY_EXCLUDE_IN:
+        return 0.0
+    if d <= BODY_NO_PENALTY_IN:
+        return 1.0
+    if d <= BODY_SMALL_PENALTY_IN:
+        return 1.0 - 0.15 * (d - BODY_NO_PENALTY_IN) / (
+            BODY_SMALL_PENALTY_IN - BODY_NO_PENALTY_IN
+        )
+    if d <= BODY_EXCEPTIONAL_IN:
+        return 0.85 - 0.45 * (d - BODY_SMALL_PENALTY_IN) / (
+            BODY_EXCEPTIONAL_IN - BODY_SMALL_PENALTY_IN
+        )
+    return 0.40 * (1.0 - (d - BODY_EXCEPTIONAL_IN) / (BODY_EXCLUDE_IN - BODY_EXCEPTIONAL_IN))
+
+
+def listed_role_preference(listed: str | None, nba_group: str | None) -> float:
+    listed_n = (listed or "").strip().lower()
+    nba_n = (nba_group or "").strip().lower()
+    if not listed_n:
+        return 0.5
+    if nba_n == listed_n:
+        return 1.0
+    if nba_n in ADJACENT_GROUPS.get(listed_n, ()):
+        return 0.5
+    return 0.0
+
+
+def sample_confidence(user_q: dict[str, float] | None, dims: list[str]) -> float:
+    if not dims:
+        return 0.5
+    uq = user_q or {}
+    vals = [max(0.05, min(1.0, float(uq.get(dim, 0.5)))) for dim in dims]
+    return sum(vals) / len(vals)
+
+
+def combined_match_score(
+    *,
+    role_similarity: float,
+    body: float,
+    confidence: float,
+    listed_pref: float,
+) -> float:
+    return (
+        RANK_ROLE_WEIGHT * float(role_similarity)
+        + RANK_BODY_WEIGHT * float(body)
+        + RANK_CONFIDENCE_WEIGHT * float(confidence)
+        + RANK_LISTED_ROLE_WEIGHT * float(listed_pref)
+    )
+
+
+def classify_comp_bucket(delta_in: float | None, role_distance: float) -> str | None:
+    """primary | style_only | None (exclude from named lists)."""
+    if delta_in is None or delta_in > BODY_EXCLUDE_IN:
+        return None
+    if delta_in <= BODY_PRIMARY_MAX_IN:
+        return "primary"
+    if delta_in <= BODY_EXCEPTIONAL_IN:
+        if float(role_distance) < EXCEPTIONAL_ROLE_DISTANCE:
+            return "primary"
+        return "style_only"
+    return "style_only"
+
+
 def height_tiebreak(
     user_height_in: float,
     nba_height_in: float | None,
     *,
-    band_in: float,
-    weight: float = HEIGHT_TIEBREAK_WEIGHT,
+    band_in: float | None = None,
+    weight: float = RANK_BODY_WEIGHT,
 ) -> float:
-    if nba_height_in is None or band_in <= 0:
-        return 0.0
-    frac = min(1.0, abs(float(user_height_in) - float(nba_height_in)) / float(band_in))
-    return weight * frac
+    """Body-size penalty used in why traces. Not a role dimension."""
+    del band_in
+    delta = height_delta_in(user_height_in, nba_height_in)
+    return weight * (1.0 - body_plausibility(delta))
 
 
 def resemblance_from_distance(distance: float) -> tuple[float, str]:
@@ -204,13 +300,17 @@ def rank_role_matches(
     user_vector: dict[str, float],
     user_q: dict[str, float] | None = None,
     user_height_in: float,
-    height_band_in: float,
-    top_k: int = 3,
+    listed_position: str | None = None,
+    height_band_in: float | None = None,
+    top_k: int | None = 3,
 ) -> list[dict[str, Any]]:
+    del height_band_in  # exclusion is BODY_EXCLUDE_IN, not a pre-filter band
     validate_role_vector_payload(user_vector)
     ranked: list[dict[str, Any]] = []
     for player in players:
         nba_vec = nba_role_vector(player)
+        if not covers_user_dimensions(user_vector, nba_vec):
+            continue
         dist = masked_distance(
             user_vector,
             nba_vec,
@@ -223,9 +323,26 @@ def rank_role_matches(
             nba_h = float(player["height_in"])
         except (KeyError, TypeError, ValueError):
             nba_h = None
-        tie = height_tiebreak(user_height_in, nba_h, band_in=height_band_in)
-        ranking_distance = dist + tie
+        delta = height_delta_in(user_height_in, nba_h)
+        bucket = classify_comp_bucket(delta, dist)
+        if bucket is None:
+            continue
         score, band = resemblance_from_distance(dist)
+        dims = shared_dimensions(user_vector, nba_vec)
+        body = body_plausibility(delta)
+        conf = sample_confidence(user_q, dims)
+        listed_pref = listed_role_preference(
+            listed_position,
+            str(player.get("position_group") or player.get("position") or ""),
+        )
+        combined = combined_match_score(
+            role_similarity=score,
+            body=body,
+            confidence=conf,
+            listed_pref=listed_pref,
+        )
+        body_mismatch = bool(delta is not None and delta > BODY_PRIMARY_MAX_IN)
+        tie = RANK_BODY_WEIGHT * (1.0 - body)
         contrib = dimension_contributions(
             user_vector,
             nba_vec,
@@ -241,8 +358,15 @@ def rank_role_matches(
                 "height_in": nba_h,
                 "score": round(score, 4),
                 "distance": round(dist, 4),
-                "ranking_distance": round(ranking_distance, 4),
+                "ranking_distance": round(1.0 - combined, 4),
+                "combined_score": round(combined, 4),
                 "height_tiebreak": round(tie, 4),
+                "body_plausibility": round(body, 4),
+                "sample_confidence": round(conf, 4),
+                "listed_role_preference": round(listed_pref, 4),
+                "height_delta_in": None if delta is None else round(delta, 2),
+                "comp_bucket": bucket,
+                "body_mismatch": body_mismatch,
                 "resemblance_band": band,
                 "role_vector": nba_vec,
                 "style_vector": nba_vec,
@@ -251,4 +375,17 @@ def rank_role_matches(
             }
         )
     ranked.sort(key=lambda row: (row["ranking_distance"], row["name"] or ""))
+    if top_k is None:
+        return ranked
     return ranked[:top_k]
+
+
+def split_role_matches(
+    ranked: list[dict[str, Any]],
+    *,
+    primary_k: int = 3,
+    style_k: int = 3,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    primary = [row for row in ranked if row.get("comp_bucket") == "primary"][:primary_k]
+    style_only = [row for row in ranked if row.get("comp_bucket") == "style_only"][:style_k]
+    return primary, style_only

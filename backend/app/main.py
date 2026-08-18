@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Video-Duration"],
     )
 
     app.include_router(health_router)

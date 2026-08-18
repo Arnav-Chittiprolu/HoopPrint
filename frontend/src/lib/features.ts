@@ -56,7 +56,16 @@ export function formatFeatureValue(name: string, value: number): string {
 }
 
 export function formatHeightIn(heightIn: number): string {
-  const feet = Math.floor(heightIn / 12);
-  const inches = Math.round(heightIn % 12);
-  return `${feet}'${inches}"`;
+  const total = Math.round(heightIn);
+  const feet = Math.floor(total / 12);
+  const inches = total % 12;
+  return `${feet} ft ${inches} in`;
+}
+
+export function splitHeightIn(heightIn: number | null): { feet: number | ""; inches: number | "" } {
+  if (heightIn == null || Number.isNaN(heightIn)) {
+    return { feet: "", inches: "" };
+  }
+  const total = Math.round(heightIn);
+  return { feet: Math.floor(total / 12), inches: total % 12 };
 }

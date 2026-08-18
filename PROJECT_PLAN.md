@@ -33,7 +33,7 @@ Full-stack web app: upload clips over time → quality-checked clip events from 
 6. Pure functions compute **mechanics** features (§5.1–5.3) → mechanics card.
 7. **Event gates** produce per-event records with gate decisions and rejection reasons (§5.6).
 8. Valid events aggregate → **playing-style profile** with evidence tiers (§5.7).
-9. NBA pool filtered by **broad position group + soft height band** (eligibility only; §5.8).
+9. NBA named comps ranked **role-first**, then graded height/body plausibility (primary vs style-only; §5.8).
 10. **Masked weighted percentile distance** on shared role dimensions only (§5.6).
 11. Deterministic **why-this-match** + optional Gemini narration from stored evidence only.
 12. Split recs: **mechanics_recs** (form/drill) vs **role_recs** (upload guidance, profile confidence).
@@ -43,12 +43,12 @@ Full-stack web app: upload clips over time → quality-checked clip events from 
 
 | Tier | Requirements | UI may show | UI must not show |
 |------|--------------|-------------|------------------|
-| **Insufficient** | 0–2 valid events in dimension, or low quality | Mechanics observations + upload guidance | Archetype, NBA names, role-percentile claim |
-| **Emerging** | ≥3 valid events; median event confidence ≥ 0.70 | Broad archetype + dimension trend | Named player comparison or ranking |
-| **Established** | ≥5 valid events; ≥2 sessions when available; median confidence ≥ 0.75; bootstrap stability passes | Archetype, top 1–3 NBA **role resemblances**, why | “You play exactly like,” outcome predictions, mechanical equivalence |
-| **Strong** | ≥10 valid events across sessions; stable under resampling | Specific role profile, trend history, named examples | NBA skill/athleticism claims, exact form match |
+| **Insufficient** | 0–2 valid events total, or low quality | Mechanics observations + upload guidance | Archetype, NBA names, role-percentile claim |
+| **Emerging** | 3–4 valid events | Broad archetype + dimension trend | Named player comparison or ranking |
+| **Established** | **≥5 valid events total** (same day is fine); a dimension is used with ≥2 events | Archetype, top 1–3 NBA **role resemblances**, why | “You play exactly like,” outcome predictions, mechanical equivalence |
+| **Strong** | ≥10 valid events, stable under resampling | Specific role profile, trend history, named examples | NBA skill/athleticism claims, exact form match |
 
-Named NBA examples require **Established** tier (not merely “5 clips uploaded”).
+Named NBA examples require **Established** tier (**5 valid events total**, not 5 per clip type).
 
 ### 1.2 Hard constraints (never violate)
 
@@ -108,9 +108,9 @@ Mechanics (form) update whenever pose is good enough. **Playing-style / NBA role
 
 #### Catch readiness (shot clips)
 
-- **Counts:** A catch or gather is visible (hands come together), then a shot release, in about **0.3–1.2 seconds**.
-- **Does not count:** Form shooting with no catch; a shot that’s too slow or too instant to be a real catch-and-shoot; blurry arms; unknown video speed.
-- **User sees:** “We used this clip as catch-and-shoot evidence” vs “Form measured, not used for role.”
+- **Counts:** Catch-and-shoot (hands gather, then a shot) **or** a pull-up / create-off-the-bounce with visible hip travel into the release.
+- **Does not count:** Stationary form shooting with no catch and no gather step.
+- **User sees:** “Catch-and-shoot evidence” vs “Pull-up evidence” vs “Form measured, not used for role.”
 
 #### Rim-pressure tendency (drive clips)
 
@@ -131,7 +131,7 @@ Mechanics (form) update whenever pose is good enough. **Playing-style / NBA role
 |-----------|-------------|----------------|
 | 1–2 valid actions of one type | Mechanics only | Form numbers + “upload more of this action” |
 | 3–4 valid actions | That dimension starts counting | Archetype label, no NBA name |
-| 5+ valid actions, stable, **≥2 different dimensions** | Role comparison allowed | Named NBA role resemblance + why |
+| 5+ valid actions | Role comparison allowed | Named NBA role resemblance + why |
 | Gate failed | Nothing for role | Still see mechanics if pose worked |
 
 **Never claimed from a clip:** make/miss, true ball arc, “you drive as often as Player X,” “you shoot like Steph.”
@@ -325,7 +325,11 @@ Store `height_in` / `height_z` (US male) on `profiles`. Recompute `height_z` whe
 
 `approx_release_height_in ≈ height_in × release_height_ratio`
 
-Same ratio on a 5'10" user vs a 6'8" user is a different physical profile. Scale `first_step_burst` by body size (displacement in body-lengths), not raw pixels. Height **filters** the NBA pool (height band + position) using **`height_z_nba`**; it does **not** invent shooting/driving/passing mechanics — clips do.
+**Height × video:** pose does not know real height. `release_height_ratio` is wrist height / standing-body height **in the frame**. With stated height:
+
+`approx_release_height_in ≈ height_in × release_height_ratio`
+
+Same ratio on a 5'10" user vs a 6'8" user is a different physical profile. Scale `first_step_burst` by body size (displacement in body-lengths), not raw pixels. Height is **body plausibility** for named NBA comps (§5.8); it does **not** invent shooting/driving/passing mechanics — clips do.
 
 ### 5.6 Role profile space (how NBA comps actually work)
 
@@ -416,10 +420,10 @@ Use **“restricted-area attempt share or documented rim-attempt-share proxy, wh
 
 #### 5.6.2 Masked weighted percentile distance
 
-1. Filter NBA pool: broad position cohort, soft height band, minimum minutes/possessions, sufficient denominators (§5.8).
+1. Eligible NBA pool: minutes/possessions + role vector + **exclude >9" height gap** (§5.8). Listed position is a weak preference, not a lock.
 2. NBA stats → **within-cohort percentiles** (empirical CDF / rank; not league min-max).
 3. User gated evidence → amateur reference percentile **only when reference population is documented**; otherwise show raw medians + “building baseline” — do not fake NBA-scale percentiles.
-4. Compare only dimensions present on both sides (**mask**, never zero-fill).
+4. Distance uses only dimensions present on both sides (**mask**, never zero-fill). **Named ranking** further requires the NBA player to cover **every user-active dimension** — a player missing a dim you have cannot win by looking closer on a subset.
 
 \[
 d(u,p)= \sqrt{ \frac{ \sum_{j \in M} w_j q_{u,j} q_{p,j} (z_{u,j}-z_{p,j})^2 }{ \sum_{j \in M} w_j q_{u,j} q_{p,j} } }
@@ -437,7 +441,7 @@ d(u,p)= \sqrt{ \frac{ \sum_{j \in M} w_j q_{u,j} q_{p,j} (z_{u,j}-z_{p,j})^2 }{ 
 
 Never a naked “89% like Player X.” Prefer: *Role-profile proximity: Strong · Evidence strength: Established · Match confidence: 76/100* (with tooltip definitions).
 
-Require **≥2 active role dimensions** + **Established** tier before named overall match. If player identity unstable but archetype stable → show archetype, suppress names.
+Require **Established** tier (**≥5 valid events total**) before a named overall match. One active dimension is enough for an early resemblance; mixed clip types make it stronger. Stability / top-3 overlap gates apply at **Strong** (≥10 events).
 
 #### Archetypes (deterministic — not LLM-generated)
 
@@ -462,30 +466,37 @@ Document exact field ← `nba_api` mapping in README + `nba_seed.py` with proven
 4. Store: score SD, 80%/95% CI, top-3 overlap rate, archetype agreement rate.
 
 ```text
-stable = (
-  event_count >= 5
+established_named = event_count >= 5
+strong_stable = (
+  event_count >= 10
   AND bootstrap_dimension_sd <= 0.12
   AND top_3_overlap_rate >= 0.60
-  AND active_role_dimensions >= 2
 )
 ```
 
-If bootstrap fails stability → suppress named players; show archetype + “keep building your profile.”
+If Strong-tier bootstrap fails stability → keep names from Established, but do not claim Strong.
 
 ### 5.8 Height and position policy
 
-**Position:** user-reported; broad groups (`guard`, `wing`, `forward`, `center`); widen to adjacent group only when cohort too small — **with UI disclosure**.
+**Principle:** Match users to NBA players primarily by what they do on the court, then use height (and later wingspan / standing reach) so named comparisons make real basketball sense. Height does **not** decide playing style.
 
-**Height:** soft eligibility band; default ±3 in; expand to ±5 in only for minimum viable pool; **≤5–10% tie-breaker max**; never a role dimension.
+**Position:** clips infer functional role. Listed rec position is a **weak preference** (~5% of rank), not a hard lock. A 5'10" off-ball wing is not forced onto NBA forwards.
 
-| Stage | Position cohort | Height rule | Use |
-|---|---|---|---|
-| 1 | Same broad group | ±3 in | Default |
-| 2 | Same broad group | ±5 in | Pool too small |
-| 3 | Adjacent broad group | ±4–5 in | Disclosure required |
-| 4 | — | — | Archetype only; no named match |
+**Height (graded body plausibility):**
 
-Results must show: *“Comparison pool: guards and wings within 5 inches of your reported height, using [season] public NBA role statistics.”*
+| Gap | Treatment |
+|-----|-----------|
+| 0–3 in | Essentially no penalty |
+| 3–5 in | Small penalty; still primary |
+| 5–7 in | Primary only if role distance is High (`< 0.75`); else style-only, labeled body mismatch |
+| 7–9 in | Style-only reference — not a primary comp |
+| >9 in | Exclude from named lists |
+
+**Rank blend:** ~72% role similarity, ~16% body, ~7% clip/sample confidence, ~5% listed role.
+
+**UI returns three results:** (1) primary NBA role comps, (2) style-only references, (3) physical-context copy. Do **not** hide names because the set is smaller than 8; label **limited confidence** instead. Mark comps **stale** when height, position, or clip evidence changes.
+
+**Input:** feet/inches picker; store `height_in` as total inches.
 
 ### 5.9 Recommendations (mechanics vs role — never conflate)
 
@@ -526,7 +537,7 @@ Upload (many clips over time) → Storage + clips row
   → Mechanics features (§5.1–5.3) → user_profiles_agg
   → Event gates → clip_events (pass/fail + rejection reason)
   → Aggregate valid events → user_role_profile + evidence tier + stability
-  → Filter NBA pool (§5.8 staged cohort)
+  → Eligible NBA pool (§5.8 role-first + body plausibility)
   → Masked weighted percentile distance (§5.6.2)
   → Archetype OR NBA role resemblances (§5.7 tiers)
   → Why breakdown (deterministic) + optional Gemini narration
@@ -911,7 +922,7 @@ Ask for structured output:
 - [x] Wired into `clip_processor` after mechanics extraction (persists on process; fails open on DB error)
 - [x] Gate tests — `tests/test_role_profile_gates.py` (18 tests with contracts)
 
-**Rejection reasons:** `low_track_confidence`, `low_pose_visibility`, `missing_fps`, `no_catch_proxy`, `catch_timing_out_of_range`, `insufficient_pre_post_window`, `no_drive_onset`, `insufficient_hip_displacement`, `no_pass_release`, `no_release_frame`
+**Rejection reasons:** `low_track_confidence`, `low_pose_visibility`, `missing_fps`, `form_shot`, `insufficient_pre_post_window`, `no_drive_onset`, `insufficient_hip_displacement`, `no_pass_release`, `no_release_frame`
 
 **Note:** Playmaking **dimension** needs ≥3 valid events across uploads (Phase 10.3). Single pass clip may record events that fail or pass individually.
 
@@ -924,7 +935,7 @@ Ask for structured output:
 - [x] Wired into `clip_processor` after `clip_events` persist → upsert `user_role_profile`
 - [x] Tests — `tests/test_role_profile_aggregate.py`
 
-**Named NBA matches still wait for Phase 10.5.** Overall `established` / `strong` requires **≥2 active dimensions**. One deep dimension stays `emerging` at the profile level.
+**Named NBA matches still wait for Phase 10.5.** Overall `established` is **≥5 valid events total**. One dimension is enough for an early named resemblance.
 
 #### 10.4 Re-seed NBA data ✓
 
@@ -940,9 +951,9 @@ Re-seed after deploy: `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba
 
 - [x] `build_role_vector()` — banned mechanics keys; schema regression tests
 - [x] Masked weighted distance; no zero-fill
-- [x] Staged height/position pool (§5.8)
+- [x] Role-first ranking + graded height bands (primary vs style-only; §5.8)
 - [x] Deterministic archetypes from role-vector bands
-- [x] Named matches only at **Established** + stability
+- [x] Named matches at **Established** (≥5 valid events); stability/overlap gates at **Strong**
 - [x] `comparison_mode: "role_profile_v1"` on API responses
 - [x] Split `mechanics_recs` vs `role_recs`
 - [x] **Disable legacy engine** from production `comp_results` (`POST /me/comp` → `run_role_comp`)

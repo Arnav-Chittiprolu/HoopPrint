@@ -58,7 +58,7 @@ POSE_TARGETS: dict[str, dict[str, Any]] = {
 }
 
 DIM_UPLOAD_HINTS = {
-    "catch_readiness": "Upload more clips with a visible catch or gather before the shot.",
+    "catch_readiness": "Upload catch-and-shoot or pull-up / gather clips. Form shooting is mechanics only.",
     "rim_pressure_tendency": "Upload gameplay or drive clips with a clear first step toward the rim.",
     "playmaking_orientation": "Upload pass clips with a visible gather and release.",
 }
@@ -140,7 +140,7 @@ def build_role_recs(
                 "action": "Keep building your profile with more quality-checked events.",
                 "because": (
                     f"Evidence strength is {profile.evidence_tier.value}. "
-                    "Named NBA examples need Established evidence on at least two role dimensions."
+                    "Named NBA examples need about 5 quality-checked clips (Established)."
                 ),
             }
         )

@@ -125,6 +125,7 @@ def test_gate_catch_readiness_valid():
     assert 0.3 <= result.signal_values["catch_to_release_s"] <= 1.2
     assert result.event_confidence is not None
     assert result.event_confidence >= 0.5
+    assert result.signal_values.get("shot_origin") == "catch_and_shoot"
 
 
 def test_gate_catch_readiness_missing_fps():
@@ -218,6 +219,23 @@ def test_gate_pass_event_valid():
     assert result.signal_values["arm_extension_deg"] > 100.0
 
 
+def test_sparse_track_pass_is_rejected():
+    frames = [
+        _fk(0, _standing(right_elbow=(0.62, 0.46), right_wrist=(0.78, 0.40))),
+        _fk(8, _standing(right_elbow=(0.62, 0.44), right_wrist=(0.80, 0.38))),
+    ]
+    events = extract_clip_events(
+        frames,
+        clip_id=uuid4(),
+        user_id=uuid4(),
+        clip_type="pass",
+        video_fps=30.0,
+    )
+    assert len(events) == 1
+    assert events[0].gate_passed is False
+    assert events[0].rejection_reason == "sparse_track"
+
+
 def test_extract_clip_events_shot():
     events = extract_clip_events(
         _shot_catch_sequence(),
@@ -283,13 +301,100 @@ def test_mean_track_confidence():
     assert mean_track_confidence(frames) == pytest.approx(0.9)
 
 
-def test_gate_catch_timing_out_of_range():
+def test_quick_catch_counts_as_catch_and_shoot():
     parsed = parse_frames(_shot_catch_sequence())
     result = gate_catch_readiness(
         parsed, dominant_hand="right", video_fps=240.0, mean_track_conf=0.9
     )
+    assert result.gate_passed is True
+    assert result.signal_values.get("shot_origin") == "catch_and_shoot"
+
+
+def test_slow_gather_counts_as_pull_up():
+    frames: list[FrameKeypoints] = []
+    for fi in range(0, 6):
+        frames.append(
+            _fk(fi, _standing(left_wrist=(0.40, 0.55), right_wrist=(0.64, 0.55)))
+        )
+    for fi in range(6, 50):
+        frames.append(
+            _fk(fi, _standing(left_wrist=(0.49, 0.50), right_wrist=(0.51, 0.50)))
+        )
+    wrist_ys = [0.48, 0.40, 0.32, 0.24, 0.18, 0.14, 0.12]
+    for offset, wy in enumerate(wrist_ys):
+        fi = 50 + offset * 2
+        frames.append(
+            _fk(
+                fi,
+                _standing(
+                    right_elbow=(0.60, 0.42),
+                    right_wrist=(0.62, wy),
+                    left_wrist=(0.48, 0.52),
+                ),
+            )
+        )
+    for fi in range(64, 70):
+        frames.append(
+            _fk(
+                fi,
+                _standing(
+                    right_elbow=(0.60, 0.44),
+                    right_wrist=(0.62, 0.14),
+                    left_wrist=(0.48, 0.52),
+                ),
+            )
+        )
+    parsed = parse_frames(frames)
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is True
+    assert result.signal_values.get("shot_origin") == "pull_up"
+
+
+def test_pull_up_without_catch_uses_hip_travel():
+    frames: list[FrameKeypoints] = []
+    for index, hip_x in enumerate([0.40, 0.46, 0.52, 0.58, 0.64, 0.70, 0.74]):
+        wy = 0.55 - index * 0.05
+        frames.append(
+            _fk(
+                index * 2,
+                _standing(
+                    left_hip=(hip_x - 0.04, 0.58),
+                    right_hip=(hip_x + 0.04, 0.58),
+                    left_wrist=(0.20, 0.55),
+                    right_wrist=(0.80, wy),
+                    right_elbow=(0.70, 0.38),
+                    nose=(hip_x, 0.20),
+                ),
+            )
+        )
+    parsed = parse_frames(frames)
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is True
+    assert result.signal_values.get("shot_origin") == "pull_up"
+
+
+def test_form_shot_without_catch_or_travel_is_rejected():
+    frames = [
+        _fk(
+            i,
+            _standing(
+                left_wrist=(0.20, 0.55),
+                right_wrist=(0.80, 0.20),
+                right_elbow=(0.70, 0.38),
+            ),
+        )
+        for i in range(16)
+    ]
+    parsed = parse_frames(frames)
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
+    )
     assert result.gate_passed is False
-    assert result.rejection_reason == "catch_timing_out_of_range"
+    assert result.rejection_reason == "form_shot"
 
 
 def test_low_fps_suppresses_time_based_catch_readiness():
@@ -299,6 +404,33 @@ def test_low_fps_suppresses_time_based_catch_readiness():
     )
     assert result.gate_passed is False
     assert result.rejection_reason == "missing_fps"
+
+
+def test_pull_up_jumper_boxed_at_release_counts():
+    """Tracking started at the apex: wrist already high, then they land."""
+    frames: list[FrameKeypoints] = []
+    for index in range(12):
+        t = index / 11.0
+        hip_y = 0.48 + t * 0.10
+        wrist_y = 0.12 + t * 0.28
+        frames.append(
+            _fk(
+                index,
+                _standing(
+                    left_hip=(0.46, hip_y),
+                    right_hip=(0.54, hip_y),
+                    left_wrist=(0.20, 0.55),
+                    right_wrist=(0.80, wrist_y),
+                    right_elbow=(0.70, 0.30 + t * 0.12),
+                ),
+            )
+        )
+    parsed = parse_frames(frames)
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is True
+    assert result.signal_values.get("shot_origin") == "pull_up"
 
 
 def test_no_catch_proxy_suppresses_event():
@@ -318,4 +450,4 @@ def test_no_catch_proxy_suppresses_event():
         parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
     )
     assert result.gate_passed is False
-    assert result.rejection_reason in {"no_catch_proxy", "no_release_frame", "insufficient_pre_post_window"}
+    assert result.rejection_reason == "form_shot"

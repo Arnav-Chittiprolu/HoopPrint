@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--source", required=True, choices=("individual", "gameplay"))
     parser.add_argument("--suffix", default=".mp4")
     parser.add_argument("--bbox", default="", help="x,y,w,h normalized, required for gameplay")
+    parser.add_argument("--start-s", type=float, default=0.0, help="seconds to start tracking the box")
     args = parser.parse_args()
 
     import cv2
@@ -47,6 +48,7 @@ def main() -> int:
             frames = extract_pose_keypoints_tracked_from_path(
                 video_path,
                 NormBox(x=parts[0], y=parts[1], w=parts[2], h=parts[3]),
+                start_s=args.start_s,
             )
         else:
             frames = extract_pose_keypoints_from_path(video_path)

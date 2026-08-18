@@ -70,6 +70,44 @@ class SupabaseService:
         async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
             await client.delete(url, headers=self.headers)
 
+    async def delete_storage_objects(self, paths: list[str]) -> None:
+        unique = [path for path in dict.fromkeys(paths) if path]
+        for path in unique:
+            try:
+                await self.delete_clip_file(path)
+            except Exception:
+                continue
+
+    async def delete_clips_for_user(self, user_id: str) -> int:
+        url = f"{self.base_url}/rest/v1/clips?user_id=eq.{user_id}"
+        async with httpx.AsyncClient(timeout=60.0, verify=certifi.where()) as client:
+            response = await client.delete(
+                url,
+                headers={**self.headers, "Prefer": "return=representation"},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Clip delete failed: {response.status_code} {response.text}"
+                )
+            data = response.json()
+            if isinstance(data, list):
+                return len(data)
+            return 0
+
+    async def delete_clip_for_user(self, clip_id: str, user_id: str) -> bool:
+        url = f"{self.base_url}/rest/v1/clips?id=eq.{clip_id}&user_id=eq.{user_id}"
+        async with httpx.AsyncClient(timeout=60.0, verify=certifi.where()) as client:
+            response = await client.delete(
+                url,
+                headers={**self.headers, "Prefer": "return=representation"},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Clip delete failed: {response.status_code} {response.text}"
+                )
+            data = response.json()
+            return bool(data)
+
     async def insert_clip(self, row: dict) -> dict:
         url = f"{self.base_url}/rest/v1/clips"
         async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
@@ -162,9 +200,18 @@ class SupabaseService:
             rows = response.json()
             return rows[0] if rows else None
 
-    async def upsert_player_box(self, clip_id: str, x: float, y: float, w: float, h: float) -> dict:
+    async def upsert_player_box(
+        self,
+        clip_id: str,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        *,
+        start_s: float = 0.0,
+    ) -> dict:
         url = f"{self.base_url}/rest/v1/player_boxes?on_conflict=clip_id"
-        payload = {"clip_id": clip_id, "x": x, "y": y, "w": w, "h": h}
+        payload = {"clip_id": clip_id, "x": x, "y": y, "w": w, "h": h, "start_s": start_s}
         async with httpx.AsyncClient(timeout=30.0, verify=certifi.where()) as client:
             response = await client.post(
                 url,
@@ -174,6 +221,16 @@ class SupabaseService:
                 },
                 json=payload,
             )
+            if response.status_code >= 400 and "start_s" in (response.text or ""):
+                payload.pop("start_s", None)
+                response = await client.post(
+                    url,
+                    headers={
+                        **self.headers,
+                        "Prefer": "resolution=merge-duplicates,return=representation",
+                    },
+                    json=payload,
+                )
             if response.status_code >= 400:
                 raise RuntimeError(f"Player box upsert failed: {response.status_code} {response.text}")
             data = response.json()

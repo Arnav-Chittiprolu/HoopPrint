@@ -20,6 +20,13 @@ from app.services.video_meta import probe_video_fps
 
 logger = logging.getLogger(__name__)
 
+# Used when player_boxes.start_s is not in the database yet.
+_bbox_start_s: dict[str, float] = {}
+
+
+def remember_bbox_start_s(clip_id: str, start_s: float) -> None:
+    _bbox_start_s[clip_id] = max(0.0, float(start_s))
+
 RETRYABLE_STATUSES = {
     ClipStatus.uploaded.value,
     ClipStatus.awaiting_bbox.value,
@@ -65,16 +72,22 @@ async def process_clip(clip_id: str, user_id: str | None = None) -> dict:
         raise ClipProcessingError(f"Clip cannot be processed from status '{clip['status']}'")
 
     bbox: NormBox | None = None
+    start_s = 0.0
     if source == SourceType.gameplay.value:
         box_row = await supabase.get_player_box(clip_id)
         if box_row is None:
-            raise ClipProcessingError("Draw a player box on the first frame before processing")
+            raise ClipProcessingError("Draw a player box on a chosen second before processing")
         bbox = NormBox(
             x=float(box_row["x"]),
             y=float(box_row["y"]),
             w=float(box_row["w"]),
             h=float(box_row["h"]),
         )
+        try:
+            start_s = float(box_row.get("start_s") or 0.0)
+        except (TypeError, ValueError):
+            start_s = 0.0
+        start_s = _bbox_start_s.get(clip_id, start_s)
 
     await supabase.update_clip(clip_id, {"status": ClipStatus.processing.value, "error_message": None})
 
@@ -94,6 +107,7 @@ async def process_clip(clip_id: str, user_id: str | None = None) -> dict:
             source=source,
             suffix=suffix,
             bbox=bbox_tuple,
+            start_s=start_s,
         )
 
         if not frames:

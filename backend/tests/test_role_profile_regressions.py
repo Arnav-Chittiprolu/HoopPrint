@@ -22,7 +22,7 @@ def _pool() -> PoolSelection:
         stage=1,
         position_groups=["forward"],
         height_band_in=3.0,
-        pool_sentence="Comparison pool: forwards within 3 inches of your reported height, using 2025-26 public NBA role statistics.",
+        pool_sentence="Height does not determine how you play. Named comparisons start from clip role resemblance.",
         named_matches_allowed=True,
         cohort_definition={"season": "2025-26"},
     )
@@ -77,7 +77,7 @@ def test_role_why_is_traceable_to_pool_and_scales():
         pool=_pool(),
         evidence_tier="established",
     )
-    assert why["pool_sentence"].startswith("Comparison pool:")
+    assert why["pool_sentence"].startswith("Height does not determine")
     assert why["score_terms"]["user_scale"] == "latent_0_1"
     assert why["score_terms"]["nba_scale"] == "cohort_percentile"
     assert why["evidence_tier"] == "established"
@@ -103,6 +103,8 @@ def test_role_llm_prompt_separates_mechanics_and_role_and_forbids_claims():
     assert "do not use for the NBA comparison" in prompt
     assert "no NBA player names" in prompt
     assert "NAMED_MATCHES_SUPPRESSED: True" in prompt
+    assert "PRIMARY_MATCH:" in prompt
+    assert "STYLE_ONLY_REFERENCES:" in prompt
 
 
 def test_production_comp_endpoint_uses_role_engine_not_legacy():
@@ -133,6 +135,25 @@ def test_comp_from_stored_row_preserves_role_profile_mode():
     assert parsed["named_matches_suppressed"] is True
     assert parsed["mechanics_recs"]
     assert parsed["role_recs"]
+
+
+def test_comp_stale_when_height_or_clips_change():
+    from app.services.comp import apply_stale_flag, make_inputs_snapshot
+
+    result = {
+        "inputs_snapshot": make_inputs_snapshot(height_in=70, position="guard", valid_event_count=8)
+    }
+    apply_stale_flag(result, height_in=70, position="guard", valid_event_count=8)
+    assert result["stale"] is False
+    apply_stale_flag(result, height_in=74, position="guard", valid_event_count=8)
+    assert result["stale"] is True
+    assert "height" in result["stale_reasons"]
+    apply_stale_flag(result, height_in=70, position="wing", valid_event_count=8)
+    assert "position" in result["stale_reasons"]
+    apply_stale_flag(result, height_in=70, position="guard", valid_event_count=12)
+    assert "clips" in result["stale_reasons"]
+    old = apply_stale_flag({}, height_in=70, position="guard", valid_event_count=8)
+    assert old["stale"] is True
 
 
 def test_nba_seed_raw_payload_round_trip():
@@ -180,7 +201,7 @@ def test_nba_seed_raw_payload_round_trip():
 
 def test_stability_and_overlap_gates_suppress_names():
     allowed, reason = decide_named_matches(
-        evidence_tier=EvidenceTier.established,
+        evidence_tier=EvidenceTier.strong,
         active_dimension_count=2,
         overall_stable=False,
         top3_overlap_rate=0.9,
@@ -191,7 +212,7 @@ def test_stability_and_overlap_gates_suppress_names():
     assert reason == "stability"
 
     allowed, reason = decide_named_matches(
-        evidence_tier=EvidenceTier.established,
+        evidence_tier=EvidenceTier.strong,
         active_dimension_count=2,
         overall_stable=True,
         top3_overlap_rate=0.2,
@@ -200,6 +221,17 @@ def test_stability_and_overlap_gates_suppress_names():
     )
     assert allowed is False
     assert reason == "top3_overlap"
+
+    allowed, reason = decide_named_matches(
+        evidence_tier=EvidenceTier.established,
+        active_dimension_count=1,
+        overall_stable=False,
+        top3_overlap_rate=0.2,
+        pool_named_allowed=True,
+        vector_dim_count=1,
+    )
+    assert allowed is True
+    assert reason is None
 
 
 def test_bootstrap_top3_overlap_is_high_when_events_are_stable():
