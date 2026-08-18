@@ -81,6 +81,8 @@ def test_no_valid_action_means_no_role_dimension():
 
 
 def test_insufficient_events_returns_archetype_or_no_comp_not_player_name():
+    from app.services.role_profile.named import decide_named_matches, visible_named_matches
+
     user_id = uuid4()
     events = [
         ClipEventRecord(
@@ -99,19 +101,59 @@ def test_insufficient_events_returns_archetype_or_no_comp_not_player_name():
         profile.role_vector.model_dump(exclude_none=True),
         evidence_tier=profile.evidence_tier,
     )
+    allowed, reason = decide_named_matches(
+        evidence_tier=profile.evidence_tier,
+        active_dimension_count=len(profile.active_dimensions),
+        overall_stable=bool((profile.quality_summary or {}).get("overall_stable")),
+        top3_overlap_rate=1.0,
+        pool_named_allowed=True,
+        vector_dim_count=len(profile.role_vector.model_dump(exclude_none=True)),
+    )
+    overall = visible_named_matches(
+        [{"name": "Should Not Appear", "score": 0.99}],
+        allowed=allowed,
+    )
     assert profile.evidence_tier != EvidenceTier.established
-    assert arch["key"] in {"insufficient_evidence", "quick_trigger_perimeter", "balanced_developing"}
+    assert allowed is False
+    assert reason == "evidence_tier"
+    assert overall == []
+    assert all(row.get("name") != "Should Not Appear" for row in overall)
     if profile.evidence_tier == EvidenceTier.insufficient:
         assert arch["shown"] is False
 
 
 def test_named_matches_require_established_evidence():
+    from app.services.role_profile.named import decide_named_matches, visible_named_matches
+
     arch = classify_archetype(
         {"catch_readiness": 0.8, "rim_pressure_tendency": 0.2},
         evidence_tier=EvidenceTier.emerging,
     )
     assert arch["shown"] is True
-    assert arch["label"] == "quick-trigger perimeter role"
+    allowed, reason = decide_named_matches(
+        evidence_tier=EvidenceTier.emerging,
+        active_dimension_count=2,
+        overall_stable=True,
+        top3_overlap_rate=1.0,
+        pool_named_allowed=True,
+        vector_dim_count=2,
+    )
+    assert allowed is False
+    assert reason == "evidence_tier"
+    assert visible_named_matches([{"name": "Named Player"}], allowed=allowed) == []
+
+    allowed_ok, reason_ok = decide_named_matches(
+        evidence_tier=EvidenceTier.established,
+        active_dimension_count=2,
+        overall_stable=True,
+        top3_overlap_rate=1.0,
+        pool_named_allowed=True,
+        vector_dim_count=2,
+    )
+    assert allowed_ok is True
+    assert reason_ok is None
+    names = visible_named_matches([{"name": "Named Player"}], allowed=allowed_ok)
+    assert names[0]["name"] == "Named Player"
 
 
 def test_active_dimensions_are_masked_not_zero_filled():
@@ -257,12 +299,20 @@ def test_nba_seed_requires_provenance_and_denominator():
 
 
 def test_seed_version_change_creates_new_comp_result_not_mutating_old():
-    """Comp snapshots are inserts; nba_seed_version is stored on the new row."""
-    from app.services.role_profile.constants import NBA_TRANSFORM_VERSION
+    import inspect
 
+    from app.services.role_profile.constants import NBA_TRANSFORM_VERSION
+    from app.services.supabase_client import SupabaseService
+
+    src = inspect.getsource(SupabaseService.insert_comp_result)
+    assert "client.post" in src
+    assert "client.patch" not in src
+    assert "client.put" not in src
     first = {"nba_seed_version": "role_profile_v1", "comparison_mode": "role_profile_v1"}
-    second = {"nba_seed_version": NBA_TRANSFORM_VERSION + "_next", "comparison_mode": "role_profile_v1"}
-    assert first != second
+    second = dict(first)
+    second["nba_seed_version"] = NBA_TRANSFORM_VERSION + "_next"
+    assert first["nba_seed_version"] != second["nba_seed_version"]
+    assert first["comparison_mode"] == second["comparison_mode"]
 
 
 def test_mechanics_recs_never_cite_nba_player():

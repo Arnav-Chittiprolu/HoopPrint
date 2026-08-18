@@ -281,3 +281,41 @@ def test_extract_clip_events_drive():
 def test_mean_track_confidence():
     frames = [_fk(0, _standing(), track=0.8), _fk(1, _standing(), track=1.0)]
     assert mean_track_confidence(frames) == pytest.approx(0.9)
+
+
+def test_gate_catch_timing_out_of_range():
+    parsed = parse_frames(_shot_catch_sequence())
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=240.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is False
+    assert result.rejection_reason == "catch_timing_out_of_range"
+
+
+def test_low_fps_suppresses_time_based_catch_readiness():
+    parsed = parse_frames(_shot_catch_sequence())
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=15.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is False
+    assert result.rejection_reason == "missing_fps"
+
+
+def test_no_catch_proxy_suppresses_event():
+    frames = [
+        _fk(
+            i,
+            _standing(
+                left_wrist=(0.20, 0.55),
+                right_wrist=(0.80, 0.20),
+                right_elbow=(0.70, 0.38),
+            ),
+        )
+        for i in range(16)
+    ]
+    parsed = parse_frames(frames)
+    result = gate_catch_readiness(
+        parsed, dominant_hand="right", video_fps=30.0, mean_track_conf=0.9
+    )
+    assert result.gate_passed is False
+    assert result.rejection_reason in {"no_catch_proxy", "no_release_frame", "insufficient_pre_post_window"}

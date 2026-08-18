@@ -953,7 +953,7 @@ Re-seed after deploy: `cd backend && PYTHONPATH=. python -m app.scripts.seed_nba
 - [x] Dashboard copy per §5.6, §1.4, Phase 8 checklist
 - [x] Remove all legacy style-vector / cosine / form-match language from dashboard + landing
 
-#### 10.7 Tests *(non-negotiable regressions)*
+#### 10.7 Tests *(non-negotiable regressions)* ✓
 
 ```text
 test_role_vector_excludes_release_angle ✓
@@ -975,6 +975,8 @@ test_missing_dimension_not_penalized_as_zero ✓
 test_seed_version_change_creates_new_comp_result_not_mutating_old ✓
 test_pool_below_minimum_suppresses_named_match ✓
 ```
+
+Also covered: role `why` never maps mechanics ↔ box score; LLM prompt splits mechanics/role and forbids candidate selection / outcome claims; named-match gate (`decide_named_matches`); bootstrap top-3 overlap; rejected events excluded from the role vector; production `POST /me/comp` calls `run_role_comp` only.
 
 **Exit criteria:** Mechanics update every processed clip; role profile updates only from valid events; named NBA examples only at Established + stability; UI never implies form match or game-frequency equivalence; every named comparison traceable to gated events → aggregates → NBA source fields → cohort → deterministic score.
 

@@ -7,11 +7,10 @@ must not write production `comp_results`.
 from __future__ import annotations
 
 import logging
-import random
 from typing import Any
 
 from app.config import get_settings
-from app.models.role_profile import ComparisonMode, EvidenceTier, UserRoleProfileRecord
+from app.models.role_profile import ComparisonMode, UserRoleProfileRecord
 from app.services.aggregate import compute_height_z, compute_height_z_nba
 from app.services.explain import (
     annotate_matches_with_why,
@@ -23,15 +22,18 @@ from app.services.nba_seed import DEFAULT_SEASON
 from app.services.role_profile.aggregate import aggregate_role_profile
 from app.services.role_profile.archetype import classify_archetype
 from app.services.role_profile.constants import (
-    BOOTSTRAP_RANK_ITERATIONS,
     COMPARISON_MODE_ROLE,
     DISCLOSURE_VERSION,
     NBA_TRANSFORM_VERSION,
     ROLE_PROFILE_VERSION,
     ROLE_VECTOR_KEYS,
-    TOP3_OVERLAP_MIN,
 )
 from app.services.role_profile.db import user_role_profile_from_row, user_role_profile_to_row
+from app.services.role_profile.named import (
+    bootstrap_top3_overlap,
+    decide_named_matches,
+    visible_named_matches,
+)
 from app.services.role_profile.nba_transform import finalize_nba_role_rows, nba_role_vector
 from app.services.role_profile.pool import select_nba_pool
 from app.services.role_profile.recs import build_mechanics_recs, build_role_recs
@@ -286,46 +288,6 @@ async def run_style_comp(
     }
 
 
-def _tier_allows_named(tier: EvidenceTier | str) -> bool:
-    value = tier.value if isinstance(tier, EvidenceTier) else str(tier)
-    return value in {EvidenceTier.established.value, EvidenceTier.strong.value}
-
-
-def _bootstrap_top3_overlap(
-    events: list[dict],
-    *,
-    user_id: str,
-    players: list[dict],
-    user_height_in: float,
-    height_band_in: float,
-    base_names: list[str],
-    user_q: dict[str, float],
-    n_iter: int = BOOTSTRAP_RANK_ITERATIONS,
-) -> float | None:
-    if len(events) < 5 or not base_names:
-        return None
-    rng = random.Random(17)
-    hits = 0.0
-    n = len(events)
-    for _ in range(n_iter):
-        sample = [events[rng.randrange(n)] for _ in range(n)]
-        profile = aggregate_role_profile(sample, user_id=user_id, rng=rng, n_iter=1)
-        vector = build_role_vector(profile.role_vector.model_dump())
-        if len(vector) < 2:
-            continue
-        ranked = rank_role_matches(
-            players,
-            user_vector=vector,
-            user_q=user_q,
-            user_height_in=user_height_in,
-            height_band_in=height_band_in,
-            top_k=3,
-        )
-        names = {row["name"] for row in ranked if row.get("name")}
-        hits += len(names & set(base_names)) / max(len(base_names), 1)
-    return hits / n_iter
-
-
 async def run_role_comp(
     supabase: SupabaseService,
     user_id: str,
@@ -423,7 +385,7 @@ async def run_role_comp(
         top_k=max(top_k, 8),
     )
     base_names = [row["name"] for row in ranked_all[:3] if row.get("name")]
-    overlap = _bootstrap_top3_overlap(
+    overlap = bootstrap_top3_overlap(
         events,
         user_id=user_id,
         players=pool.players,
@@ -433,24 +395,16 @@ async def run_role_comp(
         user_q=user_q,
     )
     overall_stable = bool((role_profile.quality_summary or {}).get("overall_stable"))
-    suppress_reason = None
-    if not _tier_allows_named(role_profile.evidence_tier):
-        suppress_reason = "evidence_tier"
-    elif len(role_profile.active_dimensions) < 2:
-        suppress_reason = "active_dimensions"
-    elif not overall_stable:
-        suppress_reason = "stability"
-    elif overlap is not None and overlap < TOP3_OVERLAP_MIN:
-        suppress_reason = "top3_overlap"
-    elif not pool.named_matches_allowed:
-        suppress_reason = "pool_size"
-    elif len(user_vector) < 2:
-        suppress_reason = "active_dimensions"
-
-    named_ok = suppress_reason is None
-    overall = []
+    named_ok, suppress_reason = decide_named_matches(
+        evidence_tier=role_profile.evidence_tier,
+        active_dimension_count=len(role_profile.active_dimensions),
+        overall_stable=overall_stable,
+        top3_overlap_rate=overlap,
+        pool_named_allowed=pool.named_matches_allowed,
+        vector_dim_count=len(user_vector),
+    )
+    overall = visible_named_matches(ranked_all, allowed=named_ok, top_k=top_k)
     if named_ok:
-        overall = ranked_all[:top_k]
         for match in overall:
             match["why"] = build_role_why(
                 match=match,
